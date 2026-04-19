@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "lib": [
+      "ES2023",
+      "DOM",
+      "WebWorker"
+    ],
+    "tsBuildInfoFile": "node_modules/.cache/tsconfig.app.tsbuildinfo"
+  },
+  "include": [
+    "src",
+    "vite.config.ts"
+  ]
+}

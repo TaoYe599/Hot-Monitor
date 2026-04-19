@@ -1,0 +1,127 @@
+@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap");
+@import "tailwindcss";
+
+:root {
+  --paper: #f3efe7;
+  --paper-strong: #fff9f1;
+  --ink: #08111f;
+  --ink-soft: #394558;
+  --line: rgba(8, 17, 31, 0.12);
+  --ember: #f06b38;
+  --ember-soft: rgba(240, 107, 56, 0.18);
+  --signal: #138a7b;
+  --signal-soft: rgba(19, 138, 123, 0.16);
+  --glow: rgba(255, 255, 255, 0.72);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at 20% 10%, rgba(240, 107, 56, 0.2), transparent 26%),
+    radial-gradient(circle at 90% 20%, rgba(19, 138, 123, 0.18), transparent 24%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.75), rgba(243, 239, 231, 0.96)),
+    repeating-linear-gradient(
+      90deg,
+      rgba(8, 17, 31, 0.02) 0,
+      rgba(8, 17, 31, 0.02) 1px,
+      transparent 1px,
+      transparent 48px
+    );
+  background-color: var(--paper);
+  font-family: "Space Grotesk", "Segoe UI", sans-serif;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+@layer base {
+  input,
+  textarea,
+  select {
+    display: block;
+    width: 100%;
+    min-width: 0;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.72);
+    color: var(--ink);
+    border-radius: 1rem;
+    padding: 0.8rem 1rem;
+    transition: border-color 120ms ease, transform 120ms ease, background 120ms ease;
+  }
+
+  input:focus,
+  textarea:focus,
+  select:focus {
+    outline: none;
+    border-color: rgba(240, 107, 56, 0.5);
+    background: rgba(255, 255, 255, 0.94);
+    transform: translateY(-1px);
+  }
+
+  input[type="number"] {
+    appearance: textfield;
+  }
+
+  input[type="number"]::-webkit-outer-spin-button,
+  input[type="number"]::-webkit-inner-spin-button {
+    margin: 0;
+    appearance: none;
+  }
+}
+
+@layer utilities {
+  .mono {
+    font-family: "IBM Plex Mono", monospace;
+  }
+
+  .panel-card {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(255, 250, 243, 0.8));
+    border: 1px solid rgba(8, 17, 31, 0.09);
+    box-shadow: 0 24px 70px rgba(8, 17, 31, 0.08);
+    backdrop-filter: blur(18px);
+  }
+
+  .radar-panel {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .radar-panel::before {
+    content: "";
+    position: absolute;
+    inset: -25% auto auto -10%;
+    width: 16rem;
+    height: 16rem;
+    border-radius: 9999px;
+    border: 1px solid rgba(19, 138, 123, 0.18);
+    box-shadow:
+      0 0 0 36px rgba(19, 138, 123, 0.08),
+      0 0 0 72px rgba(19, 138, 123, 0.05);
+    pointer-events: none;
+  }
+
+  .ember-ring {
+    box-shadow:
+      0 0 0 1px rgba(240, 107, 56, 0.16),
+      0 0 0 10px rgba(240, 107, 56, 0.06);
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "hot-monitor",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.32.1",
+  "scripts": {
+    "dev": "pnpm --parallel --filter @hot-monitor/server --filter @hot-monitor/web dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "test:api": "tsx test/api-smoke.ts",
+    "typecheck": "pnpm -r typecheck",
+    "db:generate": "pnpm --filter @hot-monitor/server db:generate",
+    "db:migrate": "pnpm --filter @hot-monitor/server db:migrate",
+    "skill:validate": "python C:/Users/linziyue/.codex/skills/.system/skill-creator/scripts/quick_validate.py skills/hot-monitor"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.1",
+    "playwright": "^1.58.2",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  }
+}

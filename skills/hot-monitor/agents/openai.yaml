@@ -1,0 +1,7 @@
+interface:
+  display_name: "Hot Monitor"
+  short_description: "Manage monitors and summarize verified hotspots"
+  default_prompt: "Use $hot-monitor to create monitors, trigger scans, and summarize verified hotspots from a running Hot Monitor service."
+
+policy:
+  allow_implicit_invocation: true
