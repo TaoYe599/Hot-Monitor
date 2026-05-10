@@ -108,7 +108,7 @@ export function useEventsPrefs(monitors) {
 // ============== Hotspots Filter & Sort Hook ==============
 export function useHotspotsPrefs(monitors) {
     const defaults = {
-        sort: { field: "createdAt", order: "desc" },
+        sort: { field: "score", order: "desc" },
         filter: {},
         quickFilter: "",
     };

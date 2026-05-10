@@ -13,10 +13,68 @@ import {
   promiseTimeout,
 } from "../lib/utils.js";
 
+/** 来源收集结果 - 用于最终汇总输出 */
+interface SourceResult {
+  name: string;
+  success: boolean;
+  itemsCount: number;
+  errorMessage?: string;
+}
+
 interface FeedSource {
   label: string;
   url: string;
   baseTrust: number;
+}
+
+/**
+ * 包装异步来源收集函数，自动捕获结果并记录日志
+ */
+async function withSourceResult<T>(
+  name: string,
+  fn: () => Promise<T>,
+  results: SourceResult[],
+): Promise<T> {
+  const start = Date.now();
+  try {
+    const result = await fn();
+    const elapsed = Date.now() - start;
+    const count = Array.isArray(result) ? result.length : 0;
+    results.push({ name, success: true, itemsCount: count });
+    console.info(`[source] ✓ ${name}: ${count} items (${elapsed}ms)`);
+    return result;
+  } catch (err) {
+    const elapsed = Date.now() - start;
+    const msg = err instanceof Error ? err.message : String(err);
+    results.push({ name, success: false, itemsCount: 0, errorMessage: msg });
+    console.warn(`[source] ✗ ${name}: failed (${elapsed}ms) - ${msg}`);
+    return [] as unknown as T;
+  }
+}
+
+/**
+ * 输出来源汇总表格
+ */
+function printSourceSummary(monitorName: string, results: SourceResult[], totalItems: number): void {
+  const successCount = results.filter((r) => r.success).length;
+  const failCount = results.filter((r) => !r.success).length;
+
+  console.info(`\n┌─────────────────────────────────────────────────────────────┐`);
+  console.info(`│  来源汇总: ${monitorName.padEnd(49)}│`);
+  console.info(`├─────────────────────────────────────────────────────────────┤`);
+
+  for (const r of results) {
+    const status = r.success ? "✓" : "✗";
+    const items = r.success ? `${r.itemsCount} items` : r.errorMessage;
+    const line = `│  ${status} ${r.name.padEnd(20)} ${String(items).slice(0, 30).padEnd(30)}│`;
+    console.info(line);
+  }
+
+  console.info(`├─────────────────────────────────────────────────────────────┤`);
+  console.info(
+    `│  汇总: ${successCount} 个来源成功, ${failCount} 个来源失败, 共 ${totalItems} 条候选 │`,
+  );
+  console.info(`└─────────────────────────────────────────────────────────────┘\n`);
 }
 
 const parser = new Parser();
@@ -173,8 +231,6 @@ async function collectTwitter(config: AppConfig, monitor: MonitorRecord): Promis
     return [];
   }
 
-  console.info(`[twitter] API key configured: ${config.twitterApiKey.substring(0, 8)}...`);
-
   const variants = generateQueryVariants(monitor).slice(0, 4);
   const queryTerms = variants.map((variant) => `"${variant}"`).join(" OR ");
 
@@ -184,8 +240,6 @@ async function collectTwitter(config: AppConfig, monitor: MonitorRecord): Promis
   const MIN_VIEWS = 2000;
   const MIN_FOLLOWERS = 2000;
 
-  console.info(`[twitter] filters: likes>=${MIN_LIKES}, retweets>=${MIN_RETWEETS}, views>=${MIN_VIEWS}, followers>=${MIN_FOLLOWERS}`);
-
   const results: SourceItem[] = [];
 
   // Try Top results first (higher quality), fallback to Latest
@@ -193,8 +247,6 @@ async function collectTwitter(config: AppConfig, monitor: MonitorRecord): Promis
     if (results.length >= 10) break;
 
     const query = `${queryTerms} min_faves:${MIN_LIKES} min_retweets:${MIN_RETWEETS}`;
-    console.info(`[twitter] searching with query: ${query} (${queryType})`);
-
     const url = new URL("https://api.twitterapi.io/twitter/tweet/advanced_search");
     url.searchParams.set("query", query);
     url.searchParams.set("queryType", queryType);
@@ -206,7 +258,6 @@ async function collectTwitter(config: AppConfig, monitor: MonitorRecord): Promis
         },
       });
       if (!response.ok) {
-        console.warn(`[twitter] API returned ${response.status} for query: ${query}`);
         continue;
       }
 
@@ -216,12 +267,10 @@ async function collectTwitter(config: AppConfig, monitor: MonitorRecord): Promis
       };
 
       if (payload.error) {
-        console.warn(`[twitter] API error: ${payload.error}`);
         continue;
       }
 
       const tweets = payload.tweets ?? [];
-      console.info(`[twitter] fetched ${tweets.length} tweets (${queryType})`);
 
       for (const tweet of tweets) {
         // Skip replies (only keep original tweets)
@@ -273,11 +322,10 @@ async function collectTwitter(config: AppConfig, monitor: MonitorRecord): Promis
         });
       }
     } catch {
-      console.warn(`[twitter] ${queryType} search failed`);
+      // 静默失败，由上层汇总处理
     }
   }
 
-  console.info(`[twitter] processed ${results.length} tweets into candidates`);
   return results;
 }
 
@@ -304,12 +352,10 @@ async function collectSearch(monitor: MonitorRecord): Promise<SourceItem[]> {
       // DuckDuckGo search
       try {
         const duckUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(variant)}`;
-        console.info(`[search] fetching DuckDuckGo for "${variant}"`);
         const duckResponse = await fetchWithTimeout(duckUrl, undefined, 30000);
         if (duckResponse.ok) {
           const html = await duckResponse.text();
           const duckResults = parseDuckDuckGoResults(html).slice(0, 4);
-          console.info(`[search] DuckDuckGo got ${duckResults.length} results for "${variant}"`);
 
           const duckCandidates = await Promise.all(
             duckResults.map(async (result) => {
@@ -332,16 +378,14 @@ async function collectSearch(monitor: MonitorRecord): Promise<SourceItem[]> {
           );
           candidates.push(...duckCandidates);
         }
-      } catch (err) {
-        console.warn(`[search] DuckDuckGo failed for "${variant}": ${err instanceof Error ? err.message : String(err)}`);
+      } catch {
+        // 静默失败，由上层汇总处理
       }
 
       // Google News RSS
       try {
         const googleNewsUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(variant)}&hl=en-US&gl=US&ceid=US:en`;
-        console.info(`[search] fetching Google News for "${variant}"`);
         const newsFeed = await fetchAndParseFeed(googleNewsUrl);
-        console.info(`[search] Google News got ${newsFeed.items.length} items for "${variant}"`);
 
         const newsCandidates = await Promise.all(
           newsFeed.items.slice(0, 5).map(async (item) => {
@@ -364,8 +408,8 @@ async function collectSearch(monitor: MonitorRecord): Promise<SourceItem[]> {
           }),
         );
         candidates.push(...newsCandidates);
-      } catch (err) {
-        console.warn(`[search] Google News failed for "${variant}": ${err instanceof Error ? err.message : String(err)}`);
+      } catch {
+        // 静默失败，由上层汇总处理
       }
 
       return candidates;
@@ -373,19 +417,13 @@ async function collectSearch(monitor: MonitorRecord): Promise<SourceItem[]> {
   );
 
   const candidates = variantResults.flat();
-  const duckCount = candidates.filter((c) => c.sourceLabel === "DuckDuckGo").length;
-  const newsCount = candidates.filter((c) => c.sourceLabel === "Google News RSS").length;
-  console.info(`[search] fetched ${duckCount} duck + ${newsCount} news candidates for ${variants.join(", ")}`);
 
-  const matchedCandidates = candidates.filter((candidate) =>
+  return candidates.filter((candidate) =>
     matchesMonitorQuery(
       monitor,
       `${candidate.title}\n${candidate.excerpt}\n${candidate.content}`,
     ),
   );
-  console.info(`[search] filtered to ${matchedCandidates.length}/${candidates.length} candidates after matchesMonitorQuery`);
-
-  return matchedCandidates;
 }
 
 async function collectFeeds(
@@ -401,9 +439,7 @@ async function collectFeeds(
     const batchResults = await Promise.all(
       batch.map(async (feed) => {
         try {
-          console.info(`[feeds] fetching ${feed.label} (${feed.url})`);
           const parsed = await fetchAndParseFeed(feed.url);
-          console.info(`[feeds] ${feed.label} got ${parsed.items.length} items`);
           return parsed.items.slice(0, 8).map((item) => {
             const link = normalizeUrl(item.link ?? item.guid ?? feed.url);
             const body = compactText(item.contentSnippet ?? item.content ?? item.title ?? "", 1800);
@@ -422,8 +458,7 @@ async function collectFeeds(
               raw: item as unknown as Record<string, unknown>,
             } satisfies SourceItem;
           });
-        } catch (err) {
-          console.warn(`[feeds] ${feed.label} failed: ${err instanceof Error ? err.message : String(err)}`);
+        } catch {
           return [];
         }
       }),
@@ -449,11 +484,9 @@ async function collectHackerNews(monitor: MonitorRecord): Promise<SourceItem[]> 
       const candidates: SourceItem[] = [];
       try {
         const url = `https://hn.algolia.com/api/v1/search?query=${encodeURIComponent(variant)}&tags=story&numericFilters=created_at_i>${Math.floor(Date.now() / 1000) - 48 * 3600}&hitsPerPage=10`;
-        console.info(`[hackernews] fetching for "${variant}"`);
         const response = await fetchWithTimeout(url);
 
         if (!response.ok) {
-          console.warn(`[hackernews] API returned ${response.status} for "${variant}"`);
           return candidates;
         }
 
@@ -471,7 +504,6 @@ async function collectHackerNews(monitor: MonitorRecord): Promise<SourceItem[]> 
         };
 
         const hits = data.hits ?? [];
-        console.info(`[hackernews] fetched ${hits.length} results for "${variant}"`);
 
         for (const hit of hits.slice(0, 6)) {
           if (!hit.url) continue;
@@ -490,8 +522,8 @@ async function collectHackerNews(monitor: MonitorRecord): Promise<SourceItem[]> 
             raw: hit as unknown as Record<string, unknown>,
           });
         }
-      } catch (err) {
-        console.warn(`[hackernews] failed: ${err instanceof Error ? err.message : String(err)}`);
+      } catch {
+        // 静默失败，由上层汇总处理
       }
       return candidates;
     }),
@@ -508,7 +540,6 @@ async function collectZhihu(monitor: MonitorRecord): Promise<SourceItem[]> {
       const candidates: SourceItem[] = [];
       try {
         const url = `https://www.zhihu.com/api/v4/search_v3?t=general&q=${encodeURIComponent(variant)}&correction=1&offset=0&limit=20&filter_fields=&lc_idx=0&show_all_topics=0`;
-        console.info(`[zhihu] fetching for "${variant}"`);
 
         const response = await fetchWithTimeout(url, {
           headers: {
@@ -519,7 +550,6 @@ async function collectZhihu(monitor: MonitorRecord): Promise<SourceItem[]> {
         });
 
         if (!response.ok) {
-          console.warn(`[zhihu] API returned ${response.status} for "${variant}"`);
           return candidates;
         }
 
@@ -535,7 +565,6 @@ async function collectZhihu(monitor: MonitorRecord): Promise<SourceItem[]> {
         };
 
         const items = data?.data ?? [];
-        console.info(`[zhihu] fetched ${items.length} results for "${variant}"`);
 
         for (const item of items.slice(0, 6)) {
           const obj = item.object;
@@ -573,8 +602,8 @@ async function collectZhihu(monitor: MonitorRecord): Promise<SourceItem[]> {
             });
           }
         }
-      } catch (err) {
-        console.warn(`[zhihu] failed: ${err instanceof Error ? err.message : String(err)}`);
+      } catch {
+        // 静默失败，由上层汇总处理
       }
       return candidates;
     }),
@@ -591,7 +620,6 @@ async function collectBaidu(monitor: MonitorRecord): Promise<SourceItem[]> {
       const candidates: SourceItem[] = [];
       try {
         const url = `https://www.baidu.com/s?wd=${encodeURIComponent(variant)}&rn=10&ie=utf-8`;
-        console.info(`[baidu] fetching for "${variant}"`);
         const response = await fetchWithTimeout(url, {
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -599,7 +627,6 @@ async function collectBaidu(monitor: MonitorRecord): Promise<SourceItem[]> {
         });
 
         if (!response.ok) {
-          console.warn(`[baidu] API returned ${response.status} for "${variant}"`);
           return candidates;
         }
 
@@ -629,10 +656,8 @@ async function collectBaidu(monitor: MonitorRecord): Promise<SourceItem[]> {
             });
           }
         });
-
-        console.info(`[baidu] fetched ${candidates.length} results for "${variant}"`);
-      } catch (err) {
-        console.warn(`[baidu] failed: ${err instanceof Error ? err.message : String(err)}`);
+      } catch {
+        // 静默失败，由上层汇总处理
       }
       return candidates;
     }),
@@ -658,7 +683,6 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
   for (const subreddit of REDDIT_SUBREDDITS) {
     try {
       const url = `https://www.reddit.com/r/${subreddit.name}/hot.json?limit=25`;
-      console.info(`[reddit] fetching r/${subreddit.name}/hot`);
 
       const response = await fetchWithTimeout(url, {
         headers: {
@@ -667,7 +691,6 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
       }, 20000); // 20 second timeout
 
       if (!response.ok) {
-        console.warn(`[reddit] r/${subreddit.name} returned ${response.status}`);
         continue;
       }
 
@@ -692,7 +715,6 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
       };
 
       const posts = data?.data?.children ?? [];
-      console.info(`[reddit] r/${subreddit.name} got ${posts.length} posts`);
 
       for (const post of posts) {
         const p = post.data;
@@ -729,8 +751,8 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
           raw: p as unknown as Record<string, unknown>,
         });
       }
-    } catch (err) {
-      console.warn(`[reddit] r/${subreddit.name} failed: ${err instanceof Error ? err.message : String(err)}`);
+    } catch {
+      // 静默失败，由上层汇总处理
     }
   }
 
@@ -738,7 +760,6 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
   for (const variant of variants.slice(0, 2)) {
     try {
       const searchUrl = `https://www.reddit.com/search.json?q=${encodeURIComponent(variant)}&sort=relevance&t=week&limit=20`;
-      console.info(`[reddit] searching for "${variant}"`);
 
       const response = await fetchWithTimeout(searchUrl, {
         headers: {
@@ -747,7 +768,6 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
       }, 20000);
 
       if (!response.ok) {
-        console.warn(`[reddit] search returned ${response.status}`);
         continue;
       }
 
@@ -772,7 +792,6 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
       };
 
       const posts = data?.data?.children ?? [];
-      console.info(`[reddit] search got ${posts.length} posts for "${variant}"`);
 
       for (const post of posts) {
         const p = post.data;
@@ -799,12 +818,11 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
           raw: p as unknown as Record<string, unknown>,
         });
       }
-    } catch (err) {
-      console.warn(`[reddit] search failed: ${err instanceof Error ? err.message : String(err)}`);
+    } catch {
+      // 静默失败，由上层汇总处理
     }
   }
 
-  console.info(`[reddit] collected ${candidates.length} candidates for monitor ${monitor.query}`);
   return candidates;
 }
 
@@ -816,7 +834,6 @@ async function collectGoogle(monitor: MonitorRecord): Promise<SourceItem[]> {
       const candidates: SourceItem[] = [];
       try {
         const url = `https://www.google.com/search?q=${encodeURIComponent(variant)}&tbm=nws&num=10`;
-        console.info(`[google] fetching for "${variant}"`);
         const response = await fetchWithTimeout(url, {
           headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
@@ -826,7 +843,6 @@ async function collectGoogle(monitor: MonitorRecord): Promise<SourceItem[]> {
         });
 
         if (!response.ok) {
-          console.warn(`[google] API returned ${response.status} for "${variant}"`);
           return candidates;
         }
 
@@ -861,10 +877,8 @@ async function collectGoogle(monitor: MonitorRecord): Promise<SourceItem[]> {
             });
           }
         });
-
-        console.info(`[google] fetched ${candidates.length} results for "${variant}"`);
-      } catch (err) {
-        console.warn(`[google] failed: ${err instanceof Error ? err.message : String(err)}`);
+      } catch {
+        // 静默失败，由上层汇总处理
       }
       return candidates;
     }),
@@ -877,21 +891,26 @@ export class SourceService {
   constructor(private readonly config: AppConfig) {}
 
   async collect(monitor: MonitorRecord): Promise<SourceItem[]> {
-    const tasks: Array<Promise<SourceItem[]>> = [];
+    const results: SourceResult[] = [];
 
-    console.info(`[source] sources config for monitor ${monitor.id}:`, JSON.stringify(monitor.sources));
+    const tasks: Array<{ name: string; promise: Promise<SourceItem[]> }> = [];
 
-    if (monitor.sources.twitter) tasks.push(collectTwitter(this.config, monitor));
-    if (monitor.sources.search) tasks.push(collectSearch(monitor));
-    if (monitor.sources.google) tasks.push(collectGoogle(monitor));
-    if (monitor.sources.rss) tasks.push(collectFeeds(monitor, OFFICIAL_FEEDS, "rss"));
-    if (monitor.sources.github) tasks.push(collectFeeds(monitor, GITHUB_RELEASE_FEEDS, "github"));
-    if (monitor.sources.hackernews) tasks.push(collectHackerNews(monitor));
-    if (monitor.sources.zhihu) tasks.push(collectZhihu(monitor));
-    if (monitor.sources.baidu) tasks.push(collectBaidu(monitor));
-    if (monitor.sources.reddit) tasks.push(collectReddit(monitor));
+    if (monitor.sources.twitter) tasks.push({ name: "Twitter", promise: collectTwitter(this.config, monitor) });
+    if (monitor.sources.search) tasks.push({ name: "Search (DuckDuckGo + Google)", promise: collectSearch(monitor) });
+    if (monitor.sources.google) tasks.push({ name: "Google News", promise: collectGoogle(monitor) });
+    if (monitor.sources.rss) tasks.push({ name: "Official RSS Feeds", promise: collectFeeds(monitor, OFFICIAL_FEEDS, "rss") });
+    if (monitor.sources.github) tasks.push({ name: "GitHub Releases", promise: collectFeeds(monitor, GITHUB_RELEASE_FEEDS, "github") });
+    if (monitor.sources.hackernews) tasks.push({ name: "Hacker News", promise: collectHackerNews(monitor) });
+    if (monitor.sources.zhihu) tasks.push({ name: "知乎", promise: collectZhihu(monitor) });
+    if (monitor.sources.baidu) tasks.push({ name: "百度搜索", promise: collectBaidu(monitor) });
+    if (monitor.sources.reddit) tasks.push({ name: "Reddit", promise: collectReddit(monitor) });
 
-    const items = dedupeSourceItems((await Promise.all(tasks)).flat())
+    // 并行执行所有来源收集，同时记录结果
+    const allResults = await Promise.all(
+      tasks.map((t) => withSourceResult(t.name, () => t.promise, results)),
+    );
+
+    const items = dedupeSourceItems(allResults.flat())
       .map((item) => ({
         ...item,
         raw: {
@@ -905,9 +924,8 @@ export class SourceService {
         return rightScore - leftScore;
       });
 
-    console.info(
-      `[source] collected ${items.length} candidates for monitor ${monitor.id} (${monitor.query})`,
-    );
+    // 输出汇总表格
+    printSourceSummary(`"${monitor.query}"`, results, items.length);
 
     // Increase limit from 24 to 50 for better coverage
     return items.slice(0, 50);

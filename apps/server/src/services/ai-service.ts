@@ -55,47 +55,146 @@ export class AiService {
     messages: Array<{ role: "system" | "user"; content: string }>,
   ): Promise<z.infer<TSchema> | null> {
     if (!this.config.openRouterApiKey) {
+      console.warn("[ai] OpenRouter API key not configured, using heuristic fallback");
       return null;
     }
 
-    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.config.openRouterApiKey}`,
-        "Content-Type": "application/json",
-        "HTTP-Referer": this.config.openRouterSiteUrl,
-        "X-OpenRouter-Title": this.config.openRouterAppName,
-      },
-      body: JSON.stringify({
-        model: this.config.openRouterModel,
-        messages,
-        plugins: [{ id: "response-healing" }],
-        response_format: {
-          type: "json_schema",
-          json_schema: {
-            name: schemaName,
-            strict: true,
-            schema: z.toJSONSchema(schema),
-          },
+    const body = {
+      model: this.config.openRouterModel,
+      messages,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: schemaName,
+          strict: true,
+          schema: z.toJSONSchema(schema),
         },
-      }),
-    });
+      },
+    };
 
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`OpenRouter request failed (${response.status}): ${text}`);
+    return this.executeWithRetry(schemaName, schema, body);
+  }
+
+  private async executeWithRetry<TSchema extends z.ZodTypeAny>(
+    schemaName: string,
+    schema: TSchema,
+    body: Record<string, unknown>,
+    attempt = 1,
+    maxRetries = 3,
+  ): Promise<z.infer<TSchema> | null> {
+    const bodyStr = JSON.stringify(body);
+    console.info(`[ai] calling OpenRouter (${this.config.openRouterModel}) - attempt ${attempt}/${maxRetries}, body size: ${bodyStr.length} chars`);
+
+    let response: Response;
+    let responseText: string | null = null;
+
+    try {
+      response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${this.config.openRouterApiKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": this.config.openRouterSiteUrl,
+          "X-Title": this.config.openRouterAppName,
+        },
+        body: bodyStr,
+      });
+    } catch (err) {
+      throw new Error(`OpenRouter network error: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    const payload = (await response.json()) as {
-      choices?: Array<{ message?: { content?: string | null } }>;
-    };
+    // Read response body once and reuse
+    try {
+      responseText = await response.text();
+    } catch {
+      // If we can't read the body, continue with what we have
+    }
+
+    // Handle rate limiting with retry
+    if (response.status === 429 || response.status === 503) {
+      const retryAfter = Number(response.headers.get("Retry-After"));
+      if (attempt < maxRetries) {
+        const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * attempt;
+        console.warn(`[ai] Rate limited (${response.status}), waiting ${waitMs}ms before retry...`);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        return this.executeWithRetry(schemaName, schema, body, attempt + 1, maxRetries);
+      }
+      throw new Error(`OpenRouter rate limited after ${maxRetries} attempts`);
+    }
+
+    // Handle other HTTP errors
+    if (!response.ok) {
+      let errorDetail = "";
+      try {
+        if (responseText) {
+          const errorPayload = JSON.parse(responseText) as {
+            error?: { message?: string; code?: string };
+            message?: string;
+          };
+          errorDetail = errorPayload.error?.message || errorPayload.message || "";
+        }
+      } catch {
+        errorDetail = responseText || "";
+      }
+
+      // 500 errors are often transient, retry once
+      if (response.status >= 500 && attempt < maxRetries) {
+        console.warn(`[ai] Server error ${response.status}: ${errorDetail.slice(0, 200)}, retrying...`);
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        return this.executeWithRetry(schemaName, schema, body, attempt + 1, maxRetries);
+      }
+
+      console.error(`[ai] OpenRouter error ${response.status}: ${errorDetail.slice(0, 500)}`);
+      throw new Error(`OpenRouter request failed (${response.status}): ${errorDetail.slice(0, 200)}`);
+    }
+
+    // Parse successful response
+    if (!responseText) {
+      console.warn("[ai] OpenRouter returned empty response");
+      return null;
+    }
+
+    let payload: { choices?: Array<{ message?: { content?: string | null } }>; error?: { message?: string } };
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      console.error(`[ai] Failed to parse response as JSON: ${responseText.slice(0, 300)}...`);
+      throw new Error("Failed to parse AI response as JSON");
+    }
+
+    // Check for API-level errors in response body
+    if (payload.error) {
+      console.error(`[ai] OpenRouter API error: ${payload.error.message}`);
+      throw new Error(`OpenRouter API error: ${payload.error.message}`);
+    }
+
     const content = payload.choices?.[0]?.message?.content;
     if (!content) {
+      console.warn("[ai] OpenRouter returned empty content");
       return null;
     }
 
-    return schema.parse(JSON.parse(content));
+  // Parse and validate JSON against schema
+  try {
+    // Try direct parse first
+    try {
+      const parsed = JSON.parse(content);
+      return schema.parse(parsed);
+    } catch {
+      // If direct parse fails, try to find JSON in the content
+      // Models sometimes add text before/after JSON
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return schema.parse(parsed);
+      }
+      throw new Error("No valid JSON found in content");
+    }
+  } catch (err) {
+    console.error(`[ai] Failed to parse content: ${content.slice(0, 300)}...`);
+    throw new Error(`Failed to parse AI content: ${err instanceof Error ? err.message : String(err)}`);
   }
+}
 
   private heuristicVerify(
     monitor: Pick<MonitorRecord, "name" | "query">,
@@ -214,7 +313,23 @@ export class AiService {
         {
           role: "system",
           content:
-            "你是一个AI热点信号梳理专家。请将候选内容整理为4到8个高价值热点，每个热点需要给出简短的label（中文标题，不带编号或前缀）和summary（中文描述）。优先识别官方或经核实的更新，忽略低信号重复内容，不要将不相关的更新合并为一个热点。",
+            `你是一个AI热点信号梳理专家。请将候选内容整理为4到8个高价值热点，每个热点需要给出简短的label（中文标题，不带编号或前缀）和Summary（中文描述）。
+
+**评分标准（必须严格执行）：**
+- score: 综合热度评分，0.0-1.0。计算方式：(信任分×0.4 + 互动分×0.3 + 新鲜分×0.3)
+  - 信任分(trustScore): 来自官方源(>0.9)给高分，社交媒体(<0.7)给低分
+  - 互动分(engagementScore): 点赞/评论/转发多的给高分
+  - 新鲜分(freshnessScore): 3小时内=1.0，24小时内=0.64，72小时内=0.48，更久=0.24
+- **重要**: 大多数候选内容的score应该在0.5-0.7之间。只有真正的热点才能达到0.8以上。如果候选内容普遍质量一般，不要强行给高分。
+- diversityScore: 来源多样性。跨多个不同平台/领域=高，重复内容=低
+- freshnessScore: 内容新鲜度（见上方计算）
+- engagementScore: 互动热度（见上方计算）
+- shouldNotify: 仅当score>=0.7且来源可信时才为true
+
+**示例评分**：
+- 官方发布的重要更新 + 多平台报道 → score 0.75-0.95
+- 单个来源的普通更新 → score 0.5-0.65
+- 重复或低质量内容 → score 0.3-0.5`,
         },
         {
           role: "user",

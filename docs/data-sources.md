@@ -227,3 +227,46 @@ TWITTERAPI_IO_KEY=your_api_key_here
 
 3. `apps/web/src/app.tsx`
    - 在监控表单中添加新的复选框
+
+## 热点评分说明
+
+热点综合分数由 AI 模型根据以下指标计算：
+
+### 评分公式
+
+```
+综合分数 = (信任分 × 0.4) + (互动分 × 0.3) + (新鲜分 × 0.3)
+```
+
+### 分数构成
+
+| 指标 | 权重 | 说明 |
+|------|------|------|
+| 信任分 (trustScore) | 40% | 来源可信度，0.55-0.96 |
+| 互动分 (engagementScore) | 30% | 社交媒体互动程度，0.0-1.0 |
+| 新鲜分 (freshnessScore) | 30% | 内容时效性，0.0-1.0 |
+
+### 新鲜分计算
+
+```
+freshnessScore = max(0, 1 - (age_in_hours / max_age))
+```
+
+- 内容发布后 1 小时内：freshnessScore ≈ 1.0
+- 内容超过 48 小时：freshnessScore ≈ 0（接近归零）
+
+### 通知阈值
+
+- **shouldNotify = true**：仅当综合分数 ≥ 0.7
+- **shouldNotify = false**：分数 < 0.7
+
+### 热点聚类
+
+AI 模型会将相似内容聚合为一个热点，每个热点包含：
+
+- **label**: 热点中文标题（简短，不带编号）
+- **summary**: 热点中文描述（180 字以内）
+- **score**: 综合热度评分（0.0-1.0）
+- **diversityScore**: 内容多样性评分
+- **shouldNotify**: 是否触发通知
+- **supportingUrls**: 热点包含的原始链接列表

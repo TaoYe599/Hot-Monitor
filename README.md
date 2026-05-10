@@ -119,3 +119,18 @@ pnpm typecheck      # 类型检查
 └── docs/
     └── implementation.md   # 实施文档
 ```
+
+## Dashboard 统计指标
+
+首页右上角的统计指标说明：
+
+| 指标 | 含义 | 数据来源 |
+|------|------|----------|
+| **运行监控** | 当前已启用的监控任务数量 | monitors 表中 enabled = true 的记录数 |
+| **有效命中** | 最近 12 条事件中已接受（accepted）的事件数量 | 最近 12 条 events 中 status = "accepted" 的记录数 |
+| **热点簇** | 当前已聚合的热点簇数量 | 最近 8 个 hotspots 的数量 |
+| **状态** | SSE 连接状态（booting/connected/disconnected） | 前端 WebSocket 连接状态 |
+
+统计指标会在以下情况自动更新：
+- 扫描任务完成时（通过 SSE 推送事件触发）
+- 页面刷新时

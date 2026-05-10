@@ -26,7 +26,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { NavLink, Route, Routes } from "react-router";
+import { NavLink, Route, Routes, useLocation } from "react-router";
 
 import {
   EventsFilterBar,
@@ -246,6 +246,7 @@ export default function App() {
   // 排序和筛选 hooks
   const eventsPrefs = useEventsPrefs(snapshot?.monitors ?? []);
   const hotspotsPrefs = useHotspotsPrefs(snapshot?.monitors ?? []);
+  const location = useLocation();
 
   // 加载筛选后的 events
   const loadFilteredEvents = useCallback(
@@ -288,6 +289,13 @@ export default function App() {
   useEffect(() => {
     loadFilteredHotspots(hotspotsPrefs.prefs.sort, hotspotsPrefs.prefs.filter);
   }, [hotspotsPrefs.prefs.sort, hotspotsPrefs.prefs.filter, loadFilteredHotspots]);
+
+  // 路由变化时，如果进入 /hotspots 页面则刷新热点
+  useEffect(() => {
+    if (location.pathname === "/hotspots") {
+      loadFilteredHotspots(hotspotsPrefs.prefs.sort, hotspotsPrefs.prefs.filter);
+    }
+  }, [location.pathname, hotspotsPrefs.prefs.sort, hotspotsPrefs.prefs.filter, loadFilteredHotspots]);
 
   // 当 SSE 有新事件时，刷新列表
   useEffect(() => {
@@ -423,6 +431,10 @@ export default function App() {
         try {
           const parsed = JSON.parse((event as MessageEvent<string>).data) as { payload: ScanJobRecord };
           mergeJob(parsed.payload);
+          // 扫描完成时刷新 Dashboard 统计
+          if (parsed.payload.status === "succeeded" || parsed.payload.status === "failed") {
+            void refreshRef.current();
+          }
         } catch {
           void refreshRef.current();
         }
