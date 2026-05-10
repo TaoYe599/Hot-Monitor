@@ -1,6 +1,25 @@
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
 import "dotenv/config";
 
 import { z } from "zod";
+
+const require = createRequire(import.meta.url);
+const possibleEnvPaths = [
+  resolve(process.cwd(), ".env"),
+  resolve(dirname(fileURLToPath(import.meta.url)), "../../.env"),
+  resolve(dirname(fileURLToPath(import.meta.url)), "../../../.env"),
+];
+
+for (const envPath of possibleEnvPaths) {
+  if (existsSync(envPath)) {
+    require("dotenv").config({ path: envPath });
+    break;
+  }
+}
 
 const envSchema = z.object({
   OPENROUTER_API_KEY: z.string().optional(),
@@ -8,7 +27,6 @@ const envSchema = z.object({
   OPENROUTER_SITE_URL: z.string().default("http://localhost:5173"),
   OPENROUTER_APP_NAME: z.string().default("Hot Monitor"),
   TWITTERAPI_IO_KEY: z.string().optional(),
-  WEBHOOK_URLS: z.string().default(""),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.coerce.number().optional(),
   SMTP_SECURE: z
@@ -19,9 +37,6 @@ const envSchema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().optional(),
   EMAIL_TO: z.string().default(""),
-  VAPID_PUBLIC_KEY: z.string().optional(),
-  VAPID_PRIVATE_KEY: z.string().optional(),
-  VAPID_SUBJECT: z.string().default("mailto:hot-monitor@example.com"),
   HOT_MONITOR_PORT: z.coerce.number().default(8787),
   HOT_MONITOR_PUBLIC_URL: z.string().default("http://localhost:8787"),
   HOT_MONITOR_DB_PATH: z.string().default("file:./apps/server/data/hot-monitor.db"),
@@ -33,7 +48,6 @@ export interface AppConfig {
   openRouterSiteUrl: string;
   openRouterAppName: string;
   twitterApiKey?: string;
-  webhookUrls: string[];
   emailTo: string[];
   smtp: {
     host?: string;
@@ -42,11 +56,6 @@ export interface AppConfig {
     user?: string;
     password?: string;
     from?: string;
-  };
-  vapid: {
-    publicKey?: string;
-    privateKey?: string;
-    subject: string;
   };
   port: number;
   publicUrl: string;
@@ -69,7 +78,6 @@ export function loadConfig(): AppConfig {
     openRouterSiteUrl: env.OPENROUTER_SITE_URL,
     openRouterAppName: env.OPENROUTER_APP_NAME,
     twitterApiKey: env.TWITTERAPI_IO_KEY,
-    webhookUrls: splitCsv(env.WEBHOOK_URLS),
     emailTo: splitCsv(env.EMAIL_TO),
     smtp: {
       host: env.SMTP_HOST,
@@ -78,11 +86,6 @@ export function loadConfig(): AppConfig {
       user: env.SMTP_USER,
       password: env.SMTP_PASSWORD,
       from: env.SMTP_FROM,
-    },
-    vapid: {
-      publicKey: env.VAPID_PUBLIC_KEY,
-      privateKey: env.VAPID_PRIVATE_KEY,
-      subject: env.VAPID_SUBJECT,
     },
     port: env.HOT_MONITOR_PORT,
     publicUrl: env.HOT_MONITOR_PUBLIC_URL,

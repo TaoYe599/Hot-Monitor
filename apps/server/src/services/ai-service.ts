@@ -214,7 +214,7 @@ export class AiService {
         {
           role: "system",
           content:
-            "You are an AI signal curator. Group the candidate items into 4 to 8 distinct high-signal hotspots when enough evidence exists. Separate different announcements even if they come from the same company. Prefer official or corroborated updates. Ignore low-signal duplicates and avoid collapsing unrelated updates into one hotspot.",
+            "你是一个AI热点信号梳理专家。请将候选内容整理为4到8个高价值热点，每个热点需要给出简短的label（中文标题，不带编号或前缀）和summary（中文描述）。优先识别官方或经核实的更新，忽略低信号重复内容，不要将不相关的更新合并为一个热点。",
         },
         {
           role: "user",

@@ -1,5 +1,9 @@
 import type {
   DashboardSnapshot,
+  EventFilter,
+  EventSortConfig,
+  HotspotFilter,
+  HotspotSortConfig,
   MonitorFormInput,
   MonitorRecord,
   ScanJobRecord,
@@ -12,6 +16,17 @@ export function splitLines(value: string): string[] {
     .split(/\r?\n|,/)
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+function buildQueryString(params: Record<string, string | number | undefined>): string {
+  const searchParams = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined) {
+      searchParams.set(key, String(value));
+    }
+  }
+  const queryString = searchParams.toString();
+  return queryString ? `?${queryString}` : "";
 }
 
 async function request<TResponse>(url: string, init?: RequestInit): Promise<TResponse> {
@@ -67,22 +82,85 @@ export const api = {
   listScanJobs() {
     return request<ScanJobRecord[]>("/api/scan-jobs");
   },
+  cancelScanJob(id: string) {
+    return request<{ ok: boolean }>(`/api/scan-jobs/${id}`, {
+      method: "DELETE",
+    });
+  },
   updateSettings(body: SettingsFormInput) {
     return request<SettingsRecord>("/api/settings", {
       method: "PATCH",
       body: JSON.stringify(body),
     });
   },
-  testNotification(channels: Array<"push" | "webhook" | "email">) {
+  testNotification(channels: Array<"email">) {
     return request("/api/settings/test-notification", {
       method: "POST",
       body: JSON.stringify({ channels }),
     });
   },
-  savePushSubscription(body: PushSubscriptionJSON) {
-    return request("/api/push/subscribe", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
+
+  // ============== 排序和筛选 API ==============
+
+  listEvents(params?: {
+    sort?: EventSortConfig;
+    filter?: EventFilter;
+    limit?: number;
+  }) {
+    const queryParams: Record<string, string | number | undefined> = {};
+    if (params?.sort) {
+      queryParams.sortField = params.sort.field;
+      queryParams.sortOrder = params.sort.order;
+    }
+    if (params?.filter) {
+      const f = params.filter;
+      if (f.monitorId !== undefined) queryParams.monitorId = f.monitorId;
+      if (f.sourceTypes && f.sourceTypes.length > 0) {
+        queryParams.sourceTypes = f.sourceTypes.join(",");
+      }
+      if (f.minAuthenticityScore !== undefined) {
+        queryParams.minAuthenticityScore = f.minAuthenticityScore;
+      }
+      if (f.minRelevanceScore !== undefined) {
+        queryParams.minRelevanceScore = f.minRelevanceScore;
+      }
+      if (f.status) queryParams.status = f.status;
+      if (f.timeRange) queryParams.timeRange = f.timeRange;
+      if (f.timeFrom) queryParams.timeFrom = f.timeFrom;
+      if (f.timeTo) queryParams.timeTo = f.timeTo;
+    }
+    if (params?.limit !== undefined) queryParams.limit = params.limit;
+
+    const queryString = buildQueryString(queryParams);
+    return request<import("@hot-monitor/shared").VerifiedEvent[]>(
+      `/api/events${queryString}`,
+    );
+  },
+
+  listHotspots(params?: {
+    sort?: HotspotSortConfig;
+    filter?: HotspotFilter;
+    limit?: number;
+  }) {
+    const queryParams: Record<string, string | number | undefined> = {};
+    if (params?.sort) {
+      queryParams.sortField = params.sort.field;
+      queryParams.sortOrder = params.sort.order;
+    }
+    if (params?.filter) {
+      const f = params.filter;
+      if (f.monitorId !== undefined) queryParams.monitorId = f.monitorId;
+      if (f.minScore !== undefined) queryParams.minScore = f.minScore;
+      if (f.minCoverage !== undefined) queryParams.minCoverage = f.minCoverage;
+      if (f.timeRange) queryParams.timeRange = f.timeRange;
+      if (f.timeFrom) queryParams.timeFrom = f.timeFrom;
+      if (f.timeTo) queryParams.timeTo = f.timeTo;
+    }
+    if (params?.limit !== undefined) queryParams.limit = params.limit;
+
+    const queryString = buildQueryString(queryParams);
+    return request<import("@hot-monitor/shared").HotspotCluster[]>(
+      `/api/hotspots${queryString}`,
+    );
   },
 };

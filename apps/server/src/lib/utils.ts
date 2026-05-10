@@ -76,7 +76,21 @@ export function keywordDensity(query: string, text: string): number {
 
 export function normalizeUrl(input: string): string {
   try {
-    const url = new URL(input);
+    let urlString = input;
+
+    if (urlString.includes("duckduckgo.com") && urlString.includes("uddg=")) {
+      try {
+        const parsed = new URL(urlString);
+        const uddg = parsed.searchParams.get("uddg");
+        if (uddg) {
+          urlString = decodeURIComponent(uddg);
+        }
+      } catch {
+        // Fall through to normal parsing
+      }
+    }
+
+    const url = new URL(urlString);
     url.hash = "";
     const trackingKeys = [
       "utm_source",

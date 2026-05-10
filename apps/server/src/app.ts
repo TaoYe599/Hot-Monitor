@@ -33,20 +33,23 @@ const monitorFormSchema = z.object({
   enabled: z.boolean().default(true),
   sources: z
     .object({
-      twitter: z.boolean(),
-      search: z.boolean(),
-      rss: z.boolean(),
-      github: z.boolean(),
+      twitter: z.boolean().default(true),
+      search: z.boolean().default(true),
+      google: z.boolean().default(true),
+      rss: z.boolean().default(true),
+      github: z.boolean().default(true),
+      hackernews: z.boolean().default(true),
+      zhihu: z.boolean().default(true),
+      baidu: z.boolean().default(true),
     })
     .default(DEFAULT_SOURCE_CONFIG),
   notifyChannels: z
-    .array(z.enum(["push", "webhook", "email"]))
+    .array(z.enum(["email"]))
     .min(1)
     .default(DEFAULT_NOTIFICATION_CHANNELS),
 });
 
 const settingsFormSchema = z.object({
-  webhookUrls: z.array(z.string().url()).default([]),
   emailTo: z.array(z.string().email()).default([]),
   smtpHost: z.string().nullable(),
   smtpPort: z.number().int().nullable(),
@@ -54,17 +57,6 @@ const settingsFormSchema = z.object({
   smtpUser: z.string().nullable(),
   smtpPassword: z.string().nullable(),
   smtpFrom: z.string().email().nullable(),
-  vapidPublicKey: z.string().nullable(),
-  vapidPrivateKey: z.string().nullable(),
-  vapidSubject: z.string().nullable(),
-});
-
-const pushSubscriptionSchema = z.object({
-  endpoint: z.string().url(),
-  keys: z.object({
-    auth: z.string(),
-    p256dh: z.string(),
-  }),
 });
 
 export interface AppServices {
@@ -141,8 +133,20 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   app.get("/api/dashboard", async () => repository.getDashboardSnapshot());
   app.get("/api/monitors", async () => repository.listMonitors());
-  app.get("/api/events", async () => repository.listEvents());
-  app.get("/api/hotspots", async () => repository.listHotspots());
+  app.get("/api/events", async (request) => {
+    const query = request.query as Record<string, string>;
+    const sort = parseEventSort(query);
+    const filter = parseEventFilter(query);
+    const limit = query.limit ? parseInt(query.limit, 10) : 40;
+    return repository.listEvents(limit, sort, filter);
+  });
+  app.get("/api/hotspots", async (request) => {
+    const query = request.query as Record<string, string>;
+    const sort = parseHotspotSort(query);
+    const filter = parseHotspotFilter(query);
+    const limit = query.limit ? parseInt(query.limit, 10) : 30;
+    return repository.listHotspots(limit, sort, filter);
+  });
   app.get("/api/scan-jobs", async () => scanJobs.list());
   app.get("/api/scan-jobs/:id", async (request, reply) => {
     const id = (request.params as { id: string }).id;
@@ -152,6 +156,15 @@ export async function buildApp(options: BuildAppOptions = {}) {
       return { message: "Scan job not found" };
     }
     return job;
+  });
+  app.delete("/api/scan-jobs/:id", async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const cancelled = scanJobs.cancel(id);
+    if (!cancelled) {
+      reply.code(404);
+      return { message: "Scan job not found or cannot be cancelled" };
+    }
+    return { ok: true };
   });
   app.get("/api/settings", async () => repository.getSettings());
 
@@ -203,27 +216,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.post("/api/settings/test-notification", async (request) => {
     const body = z
       .object({
-        channels: z.array(z.enum(["push", "webhook", "email"])).default([
-          "push",
-          "webhook",
-          "email",
-        ]),
+        channels: z.array(z.enum(["email"])).default(["email"]),
       })
       .parse(request.body) as { channels: NotificationChannel[] };
 
     await notificationService.sendTestNotification(body.channels);
     return { ok: true };
-  });
-
-  app.post("/api/push/subscribe", async (request, reply) => {
-    const body = pushSubscriptionSchema.parse(request.body);
-    const saved = await repository.upsertPushSubscription({
-      endpoint: body.endpoint,
-      auth: body.keys.auth,
-      p256dh: body.keys.p256dh,
-    });
-    reply.code(201);
-    return saved;
   });
 
   app.get("/api/stream", async (request, reply) => {
@@ -234,15 +232,32 @@ export async function buildApp(options: BuildAppOptions = {}) {
     });
     reply.raw.write(`event: ready\ndata: ${JSON.stringify({ ok: true })}\n\n`);
 
+    let closed = false;
+    const send = (data: string) => {
+      if (closed) return;
+      try {
+        reply.raw.write(data);
+      } catch {
+        closed = true;
+      }
+    };
+
     const unsubscribe = bus.subscribe((event) => {
-      reply.raw.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
+      send(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
     });
 
     const heartbeat = setInterval(() => {
-      reply.raw.write(`event: heartbeat\ndata: ${JSON.stringify({ now: new Date().toISOString() })}\n\n`);
+      send(`event: heartbeat\ndata: ${JSON.stringify({ now: new Date().toISOString() })}\n\n`);
     }, 20_000);
 
     request.raw.on("close", () => {
+      closed = true;
+      clearInterval(heartbeat);
+      unsubscribe();
+    });
+
+    request.raw.on("error", () => {
+      closed = true;
       clearInterval(heartbeat);
       unsubscribe();
     });
@@ -295,5 +310,132 @@ export async function buildApp(options: BuildAppOptions = {}) {
       bus,
     } satisfies AppServices,
     config,
+  };
+}
+
+// ============== 排序和筛选参数解析函数 ==============
+
+import type {
+  EventFilter,
+  EventSortConfig,
+  HotspotFilter,
+  HotspotSortConfig,
+  SourceKind,
+} from "@hot-monitor/shared";
+
+function parseEventSort(query: Record<string, string>): EventSortConfig | undefined {
+  const sortField = query.sortField as EventSortConfig["field"] | undefined;
+  const sortOrder = query.sortOrder as EventSortConfig["order"] | undefined;
+
+  if (!sortField || !sortOrder) return undefined;
+
+  const validFields: EventSortConfig["field"][] = [
+    "createdAt",
+    "authenticityScore",
+    "relevanceScore",
+    "combinedScore",
+    "sourceType",
+  ];
+  const validOrders: EventSortConfig["order"][] = ["asc", "desc"];
+
+  if (!validFields.includes(sortField) || !validOrders.includes(sortOrder)) {
+    return undefined;
+  }
+
+  return { field: sortField, order: sortOrder };
+}
+
+function parseEventFilter(query: Record<string, string>): EventFilter | undefined {
+  const monitorId = query.monitorId ? parseInt(query.monitorId, 10) : undefined;
+  const sourceTypes = query.sourceTypes
+    ? (query.sourceTypes.split(",") as SourceKind[])
+    : undefined;
+  const minAuthenticityScore = query.minAuthenticityScore
+    ? parseFloat(query.minAuthenticityScore)
+    : undefined;
+  const minRelevanceScore = query.minRelevanceScore
+    ? parseFloat(query.minRelevanceScore)
+    : undefined;
+  const status = query.status as EventFilter["status"] | undefined;
+  const timeRange = query.timeRange as EventFilter["timeRange"] | undefined;
+  const timeFrom = query.timeFrom || undefined;
+  const timeTo = query.timeTo || undefined;
+
+  if (
+    monitorId === undefined &&
+    !sourceTypes &&
+    minAuthenticityScore === undefined &&
+    minRelevanceScore === undefined &&
+    !status &&
+    !timeRange &&
+    !timeFrom &&
+    !timeTo
+  ) {
+    return undefined;
+  }
+
+  return {
+    monitorId,
+    sourceTypes,
+    minAuthenticityScore,
+    minRelevanceScore,
+    status,
+    timeRange,
+    timeFrom,
+    timeTo,
+  };
+}
+
+function parseHotspotSort(query: Record<string, string>): HotspotSortConfig | undefined {
+  const sortField = query.sortField as HotspotSortConfig["field"] | undefined;
+  const sortOrder = query.sortOrder as HotspotSortConfig["order"] | undefined;
+
+  if (!sortField || !sortOrder) return undefined;
+
+  const validFields: HotspotSortConfig["field"][] = [
+    "createdAt",
+    "score",
+    "diversityScore",
+    "freshnessScore",
+    "engagementScore",
+    "coverage",
+  ];
+  const validOrders: HotspotSortConfig["order"][] = ["asc", "desc"];
+
+  if (!validFields.includes(sortField) || !validOrders.includes(sortOrder)) {
+    return undefined;
+  }
+
+  return { field: sortField, order: sortOrder };
+}
+
+function parseHotspotFilter(query: Record<string, string>): HotspotFilter | undefined {
+  const monitorId = query.monitorId ? parseInt(query.monitorId, 10) : undefined;
+  const minScore = query.minScore ? parseFloat(query.minScore) : undefined;
+  const minCoverage = query.minCoverage
+    ? parseInt(query.minCoverage, 10)
+    : undefined;
+  const timeRange = query.timeRange as HotspotFilter["timeRange"] | undefined;
+  const timeFrom = query.timeFrom || undefined;
+  const timeTo = query.timeTo || undefined;
+
+  if (
+    monitorId === undefined &&
+    minScore === undefined &&
+    minCoverage === undefined &&
+    !timeRange &&
+    !timeFrom &&
+    !timeTo
+  ) {
+    return undefined;
+  }
+
+  return {
+    monitorId,
+    minScore,
+    minCoverage,
+    timeRange,
+    timeFrom,
+    timeTo,
   };
 }

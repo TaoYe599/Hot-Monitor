@@ -85,8 +85,27 @@ const statements = [
 ];
 
 export async function migrateDatabase(client: Client): Promise<void> {
+  // Run table creation statements first
   for (const statement of statements) {
     await client.execute(statement);
+  }
+
+  // Migration: Add reddit to existing monitors' sources
+  try {
+    const monitors = await client.execute("SELECT id, sources FROM monitors");
+    for (const monitor of monitors.rows ?? []) {
+      const sources = JSON.parse(String(monitor.sources));
+      if (!("reddit" in sources)) {
+        sources.reddit = true;
+        await client.execute({
+          sql: "UPDATE monitors SET sources = ? WHERE id = ?",
+          args: [JSON.stringify(sources), monitor.id],
+        });
+        console.info(`[migration] Added reddit to monitor ${monitor.id}`);
+      }
+    }
+  } catch (err) {
+    console.warn(`[migration] Failed to add reddit to monitors: ${err}`);
   }
 }
 

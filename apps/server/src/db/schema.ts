@@ -78,7 +78,6 @@ export const hotspotsTable = sqliteTable("hotspots", {
 
 export const settingsTable = sqliteTable("settings", {
   id: integer("id").primaryKey(),
-  webhookUrls: text("webhook_urls", { mode: "json" }).$type<string[]>().notNull(),
   emailTo: text("email_to", { mode: "json" }).$type<string[]>().notNull(),
   smtpHost: text("smtp_host"),
   smtpPort: integer("smtp_port"),
@@ -86,25 +85,8 @@ export const settingsTable = sqliteTable("settings", {
   smtpUser: text("smtp_user"),
   smtpPassword: text("smtp_password"),
   smtpFrom: text("smtp_from"),
-  vapidPublicKey: text("vapid_public_key"),
-  vapidPrivateKey: text("vapid_private_key"),
-  vapidSubject: text("vapid_subject"),
   updatedAt: text("updated_at").notNull(),
 });
-
-export const pushSubscriptionsTable = sqliteTable(
-  "push_subscriptions",
-  {
-    id: integer("id").primaryKey({ autoIncrement: true }),
-    endpoint: text("endpoint").notNull(),
-    auth: text("auth").notNull(),
-    p256dh: text("p256dh").notNull(),
-    createdAt: text("created_at").notNull(),
-  },
-  (table) => ({
-    endpointIdx: uniqueIndex("push_subscriptions_endpoint_idx").on(table.endpoint),
-  }),
-);
 
 export const notificationLogsTable = sqliteTable("notification_logs", {
   id: integer("id").primaryKey({ autoIncrement: true }),

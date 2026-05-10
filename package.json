@@ -5,6 +5,8 @@
   "packageManager": "pnpm@10.32.1",
   "scripts": {
     "dev": "pnpm --parallel --filter @hot-monitor/server --filter @hot-monitor/web dev",
+    "dev:server": "pnpm --filter @hot-monitor/server dev",
+    "dev:web": "pnpm --filter @hot-monitor/web dev",
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "test:api": "tsx test/api-smoke.ts",
@@ -18,5 +20,9 @@
     "playwright": "^1.58.2",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "https-proxy-agent": "^9.0.0",
+    "proxy-agent": "^8.0.1"
   }
 }

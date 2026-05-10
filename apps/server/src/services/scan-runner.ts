@@ -1,18 +1,21 @@
 import type {
   HotspotCluster,
+  HotspotClusterOutput,
   MonitorRecord,
   ScanSummary,
   VerifiedEvent,
 } from "@hot-monitor/shared";
 
 import type { LiveEventBus } from "../lib/event-bus.js";
-import { nowIso, scoreCandidateForMonitor } from "../lib/utils.js";
+import { nowIso, normalizeUrl, scoreCandidateForMonitor } from "../lib/utils.js";
 import { AiService } from "./ai-service.js";
 import { NotificationService } from "./notification-service.js";
 import { Repository } from "./repositories.js";
 import { SourceService } from "./sources.js";
 
 export class ScanRunner {
+  private readonly cancelledMonitors = new Set<number>();
+
   constructor(
     private readonly repository: Repository,
     private readonly sourceService: SourceService,
@@ -20,6 +23,14 @@ export class ScanRunner {
     private readonly notificationService: NotificationService,
     private readonly bus: LiveEventBus,
   ) {}
+
+  cancel(monitorId: number): void {
+    this.cancelledMonitors.add(monitorId);
+  }
+
+  private isCancelled(monitorId: number): boolean {
+    return this.cancelledMonitors.has(monitorId);
+  }
 
   private withinCooldown(monitor: MonitorRecord, publishedAt: string | null): boolean {
     if (!publishedAt) {
@@ -31,9 +42,17 @@ export class ScanRunner {
   }
 
   async runMonitor(monitor: MonitorRecord): Promise<ScanSummary> {
+    if (this.isCancelled(monitor.id)) {
+      throw new Error("Scan cancelled");
+    }
+
     const candidates = (await this.sourceService.collect(monitor))
       .sort((left, right) => scoreCandidateForMonitor(monitor, right) - scoreCandidateForMonitor(monitor, left))
-      .slice(0, 16);
+      .slice(0, 50);
+
+    if (this.isCancelled(monitor.id)) {
+      throw new Error("Scan cancelled");
+    }
 
     console.info(
       `[scan] monitor ${monitor.id} (${monitor.query}) entered clustering with ${candidates.length} candidates`,
@@ -44,6 +63,9 @@ export class ScanRunner {
 
     if (monitor.mode === "keyword") {
       for (const candidate of candidates) {
+        if (this.isCancelled(monitor.id)) {
+          throw new Error("Scan cancelled");
+        }
         if (this.withinCooldown(monitor, candidate.publishedAt)) {
           continue;
         }
@@ -87,7 +109,18 @@ export class ScanRunner {
 
     if (monitor.mode === "topic" && candidates.length > 0) {
       const discovered = await this.aiService.discoverHotspots(monitor, candidates);
+      if (this.isCancelled(monitor.id)) {
+        throw new Error("Scan cancelled");
+      }
       for (const cluster of discovered.filter((item) => item.shouldNotify || item.score >= 0.5).slice(0, 6)) {
+        const normalizedUrls = cluster.supportingUrls.map((url) => {
+          const normalized = normalizeUrl(url);
+          if (normalized !== url) {
+            console.info(`[scan] normalized URL: ${url} -> ${normalized}`);
+          }
+          return normalized;
+        });
+
         const created = await this.repository.createHotspot({
           monitorId: monitor.id,
           label: cluster.label,
@@ -97,7 +130,7 @@ export class ScanRunner {
           freshnessScore: cluster.freshnessScore,
           engagementScore: cluster.engagementScore,
           status: cluster.shouldNotify ? "notified" : "candidate",
-          supportingUrls: cluster.supportingUrls,
+          supportingUrls: normalizedUrls,
           createdAt: nowIso(),
         });
 

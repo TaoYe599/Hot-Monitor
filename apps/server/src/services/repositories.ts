@@ -1,21 +1,23 @@
 import type {
   DashboardSnapshot,
+  EventFilter,
+  EventSortConfig,
+  HotspotFilter,
+  HotspotSortConfig,
   HotspotCluster,
   MonitorFormInput,
   MonitorMode,
   MonitorRecord,
   NotificationChannel,
-  PushSubscriptionRecord,
   SettingsFormInput,
   SettingsRecord,
   SourceKind,
   VerifiedEvent,
 } from "@hot-monitor/shared";
 import {
-  DEFAULT_NOTIFICATION_CHANNELS,
   DEFAULT_SOURCE_CONFIG,
 } from "@hot-monitor/shared";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, lte, or, inArray, sql } from "drizzle-orm";
 
 import type { AppConfig } from "../config.js";
 import { nowIso } from "../lib/utils.js";
@@ -24,7 +26,6 @@ import {
   hotspotsTable,
   monitorsTable,
   notificationLogsTable,
-  pushSubscriptionsTable,
   settingsTable,
 } from "../db/schema.js";
 
@@ -117,26 +118,212 @@ export class Repository {
     }
 
     await this.db.delete(eventsTable).where(eq(eventsTable.monitorId, id));
-    await this.db.delete(hotspotsTable).where(eq(hotspotsTable.monitorId, id));
     await this.db.delete(monitorsTable).where(eq(monitorsTable.id, id));
     return true;
   }
 
-  async listEvents(limit = 40): Promise<VerifiedEvent[]> {
+  async listEvents(
+    limit = 40,
+    sort?: EventSortConfig,
+    filter?: EventFilter,
+  ): Promise<VerifiedEvent[]> {
+    const conditions = [];
+
+    if (filter?.monitorId !== undefined) {
+      conditions.push(eq(eventsTable.monitorId, filter.monitorId));
+    }
+
+    if (filter?.sourceTypes && filter.sourceTypes.length > 0) {
+      conditions.push(inArray(eventsTable.sourceType, filter.sourceTypes));
+    }
+
+    if (filter?.minAuthenticityScore !== undefined) {
+      conditions.push(gte(eventsTable.authenticityScore, filter.minAuthenticityScore));
+    }
+
+    if (filter?.minRelevanceScore !== undefined) {
+      conditions.push(gte(eventsTable.relevanceScore, filter.minRelevanceScore));
+    }
+
+    if (filter?.status) {
+      conditions.push(eq(eventsTable.status, filter.status));
+    }
+
+    if (filter?.timeRange || filter?.timeFrom || filter?.timeTo) {
+      const now = new Date();
+      let fromDate: Date | undefined;
+      let toDate: Date | undefined;
+
+      switch (filter.timeRange) {
+        case "today": {
+          fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          toDate = new Date(fromDate.getTime() + 24 * 60 * 60 * 1000);
+          break;
+        }
+        case "week": {
+          fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        }
+        case "month": {
+          fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        }
+        case "custom": {
+          if (filter.timeFrom) fromDate = new Date(filter.timeFrom);
+          if (filter.timeTo) toDate = new Date(filter.timeTo);
+          break;
+        }
+      }
+
+      if (fromDate) {
+        conditions.push(gte(eventsTable.createdAt, fromDate.toISOString()));
+      }
+      if (toDate) {
+        conditions.push(lte(eventsTable.createdAt, toDate.toISOString()));
+      }
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    let orderBy: ReturnType<typeof desc> | ReturnType<typeof sql> = desc(eventsTable.createdAt);
+
+    if (sort) {
+      const { field, order } = sort;
+      const ascOrDesc = order === "asc" ? sql`` : desc(sql``);
+
+      switch (field) {
+        case "createdAt":
+          orderBy = order === "asc" ? eventsTable.createdAt : desc(eventsTable.createdAt);
+          break;
+        case "authenticityScore":
+          orderBy = order === "asc"
+            ? eventsTable.authenticityScore
+            : desc(eventsTable.authenticityScore);
+          break;
+        case "relevanceScore":
+          orderBy = order === "asc"
+            ? eventsTable.relevanceScore
+            : desc(eventsTable.relevanceScore);
+          break;
+        case "combinedScore":
+          orderBy = sql`(authenticity_score * relevance_score) ${ascOrDesc}`;
+          orderBy = order === "asc"
+            ? sql`authenticity_score * relevance_score`
+            : desc(sql`authenticity_score * relevance_score`);
+          break;
+        case "sourceType":
+          orderBy = order === "asc"
+            ? eventsTable.sourceType
+            : desc(eventsTable.sourceType);
+          break;
+      }
+    }
+
     const result = await this.db
       .select()
       .from(eventsTable)
-      .orderBy(desc(eventsTable.createdAt))
+      .where(whereClause)
+      .orderBy(orderBy)
       .limit(limit);
+
     return result.map((event) => this.asVerifiedEvent(event));
   }
 
-  async listHotspots(limit = 30) {
+  async listHotspots(
+    limit = 30,
+    sort?: HotspotSortConfig,
+    filter?: HotspotFilter,
+  ) {
+    const conditions = [];
+
+    if (filter?.monitorId !== undefined) {
+      conditions.push(eq(hotspotsTable.monitorId, filter.monitorId));
+    }
+
+    if (filter?.minScore !== undefined) {
+      conditions.push(gte(hotspotsTable.score, filter.minScore));
+    }
+
+    if (filter?.timeRange || filter?.timeFrom || filter?.timeTo) {
+      const now = new Date();
+      let fromDate: Date | undefined;
+      let toDate: Date | undefined;
+
+      switch (filter.timeRange) {
+        case "today": {
+          fromDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+          toDate = new Date(fromDate.getTime() + 24 * 60 * 60 * 1000);
+          break;
+        }
+        case "week": {
+          fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+          break;
+        }
+        case "month": {
+          fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+          break;
+        }
+        case "custom": {
+          if (filter.timeFrom) fromDate = new Date(filter.timeFrom);
+          if (filter.timeTo) toDate = new Date(filter.timeTo);
+          break;
+        }
+      }
+
+      if (fromDate) {
+        conditions.push(gte(hotspotsTable.createdAt, fromDate.toISOString()));
+      }
+      if (toDate) {
+        conditions.push(lte(hotspotsTable.createdAt, toDate.toISOString()));
+      }
+    }
+
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+    let orderBy = desc(hotspotsTable.createdAt);
+
+    if (sort) {
+      const { field, order } = sort;
+
+      switch (field) {
+        case "createdAt":
+          orderBy = order === "asc" ? hotspotsTable.createdAt : desc(hotspotsTable.createdAt);
+          break;
+        case "score":
+          orderBy = order === "asc"
+            ? hotspotsTable.score
+            : desc(hotspotsTable.score);
+          break;
+        case "diversityScore":
+          orderBy = order === "asc"
+            ? hotspotsTable.diversityScore
+            : desc(hotspotsTable.diversityScore);
+          break;
+        case "freshnessScore":
+          orderBy = order === "asc"
+            ? hotspotsTable.freshnessScore
+            : desc(hotspotsTable.freshnessScore);
+          break;
+        case "engagementScore":
+          orderBy = order === "asc"
+            ? hotspotsTable.engagementScore
+            : desc(hotspotsTable.engagementScore);
+          break;
+        case "coverage":
+          orderBy = order === "asc"
+            ? sql`json_array_length(supporting_urls)`
+            : desc(sql`json_array_length(supporting_urls)`);
+          break;
+      }
+    }
+
     const result = await this.db
       .select()
       .from(hotspotsTable)
-      .orderBy(desc(hotspotsTable.createdAt))
+      .where(whereClause)
+      .orderBy(orderBy)
       .limit(limit);
+
     return result.map((hotspot) => this.asHotspotCluster(hotspot));
   }
 
@@ -195,7 +382,6 @@ export class Repository {
       .insert(settingsTable)
       .values({
         id: 1,
-        webhookUrls: this.config.webhookUrls,
         emailTo: this.config.emailTo,
         smtpHost: this.config.smtp.host ?? null,
         smtpPort: this.config.smtp.port ?? null,
@@ -203,9 +389,6 @@ export class Repository {
         smtpUser: this.config.smtp.user ?? null,
         smtpPassword: this.config.smtp.password ?? null,
         smtpFrom: this.config.smtp.from ?? null,
-        vapidPublicKey: this.config.vapid.publicKey ?? null,
-        vapidPrivateKey: this.config.vapid.privateKey ?? null,
-        vapidSubject: this.config.vapid.subject,
         updatedAt: nowIso(),
       })
       .returning();
@@ -217,7 +400,6 @@ export class Repository {
     const result = await this.db
       .update(settingsTable)
       .set({
-        webhookUrls: input.webhookUrls,
         emailTo: input.emailTo,
         smtpHost: input.smtpHost,
         smtpPort: input.smtpPort,
@@ -225,58 +407,12 @@ export class Repository {
         smtpUser: input.smtpUser,
         smtpPassword: input.smtpPassword,
         smtpFrom: input.smtpFrom,
-        vapidPublicKey: input.vapidPublicKey,
-        vapidPrivateKey: input.vapidPrivateKey,
-        vapidSubject: input.vapidSubject,
         updatedAt: nowIso(),
       })
       .where(eq(settingsTable.id, 1))
       .returning();
 
     return result[0];
-  }
-
-  async upsertPushSubscription(
-    subscription: PushSubscriptionRecord["keys"] & { endpoint: string },
-  ): Promise<PushSubscriptionRecord> {
-    const existing = await this.db
-      .select()
-      .from(pushSubscriptionsTable)
-      .where(eq(pushSubscriptionsTable.endpoint, subscription.endpoint))
-      .limit(1);
-
-    if (existing[0]) {
-      const result = await this.db
-        .update(pushSubscriptionsTable)
-        .set({
-          auth: subscription.auth,
-          p256dh: subscription.p256dh,
-        })
-        .where(eq(pushSubscriptionsTable.endpoint, subscription.endpoint))
-        .returning();
-      return this.asPushSubscriptionRecord(result[0]);
-    }
-
-    const result = await this.db
-      .insert(pushSubscriptionsTable)
-      .values({
-        endpoint: subscription.endpoint,
-        auth: subscription.auth,
-        p256dh: subscription.p256dh,
-        createdAt: nowIso(),
-      })
-      .returning();
-
-    return this.asPushSubscriptionRecord(result[0]);
-  }
-
-  async listPushSubscriptions(): Promise<PushSubscriptionRecord[]> {
-    const result = await this.db.select().from(pushSubscriptionsTable).orderBy(desc(pushSubscriptionsTable.createdAt));
-    return result.map((subscription) => this.asPushSubscriptionRecord(subscription));
-  }
-
-  async removePushSubscription(endpoint: string): Promise<void> {
-    await this.db.delete(pushSubscriptionsTable).where(eq(pushSubscriptionsTable.endpoint, endpoint));
   }
 
   async logNotification(params: {
@@ -327,13 +463,18 @@ export class Repository {
       cooldownMinutes: 60,
       enabled: true,
       sources: DEFAULT_SOURCE_CONFIG,
-      notifyChannels: DEFAULT_NOTIFICATION_CHANNELS,
+      notifyChannels: ["email"],
     };
   }
 
   private asMonitorRecord(row: typeof monitorsTable.$inferSelect): MonitorRecord {
+    const sources = {
+      ...DEFAULT_SOURCE_CONFIG,
+      ...row.sources,
+    };
     return {
       ...row,
+      sources,
       mode: row.mode as MonitorMode,
     };
   }
@@ -350,20 +491,6 @@ export class Repository {
     return {
       ...row,
       status: row.status as HotspotCluster["status"],
-    };
-  }
-
-  private asPushSubscriptionRecord(
-    row: typeof pushSubscriptionsTable.$inferSelect,
-  ): PushSubscriptionRecord {
-    return {
-      id: row.id,
-      endpoint: row.endpoint,
-      keys: {
-        auth: row.auth,
-        p256dh: row.p256dh,
-      },
-      createdAt: row.createdAt,
     };
   }
 }

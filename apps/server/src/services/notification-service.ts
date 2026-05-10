@@ -1,7 +1,6 @@
 import type { HotspotCluster, NotificationChannel, SettingsRecord, VerifiedEvent } from "@hot-monitor/shared";
 import type { Transporter } from "nodemailer";
 import nodemailer from "nodemailer";
-import webpush from "web-push";
 
 import type { AppConfig } from "../config.js";
 import type { LiveEventBus } from "../lib/event-bus.js";
@@ -41,39 +40,6 @@ export class NotificationService {
     private readonly bus: LiveEventBus,
   ) {}
 
-  private async sendWebhook(envelope: NotificationEnvelope, settings: SettingsRecord): Promise<void> {
-    for (const url of settings.webhookUrls) {
-      try {
-        const response = await fetch(url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(envelope.payload),
-        });
-
-        if (!response.ok) {
-          throw new Error(`Webhook failed with status ${response.status}`);
-        }
-
-        await this.repository.logNotification({
-          channel: "webhook",
-          target: url,
-          payload: envelope.payload,
-          status: "sent",
-        });
-      } catch (error) {
-        await this.repository.logNotification({
-          channel: "webhook",
-          target: url,
-          payload: envelope.payload,
-          status: "failed",
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
-    }
-  }
-
   private async sendEmail(envelope: NotificationEnvelope, settings: SettingsRecord): Promise<void> {
     const transporter = createTransporter(settings);
     if (!transporter || settings.emailTo.length === 0 || !settings.smtpFrom) {
@@ -108,56 +74,6 @@ export class NotificationService {
     }
   }
 
-  private async sendPush(envelope: NotificationEnvelope, settings: SettingsRecord): Promise<void> {
-    if (!settings.vapidPublicKey || !settings.vapidPrivateKey) {
-      return;
-    }
-
-    webpush.setVapidDetails(
-      settings.vapidSubject ?? this.config.vapid.subject,
-      settings.vapidPublicKey,
-      settings.vapidPrivateKey,
-    );
-
-    const subscriptions = await this.repository.listPushSubscriptions();
-    for (const subscription of subscriptions) {
-      try {
-        await webpush.sendNotification(
-          {
-            endpoint: subscription.endpoint,
-            keys: subscription.keys,
-          },
-          JSON.stringify({
-            title: envelope.title,
-            body: envelope.body,
-            url: envelope.url,
-            tag: envelope.tag,
-            type: envelope.type,
-          }),
-        );
-
-        await this.repository.logNotification({
-          channel: "push",
-          target: subscription.endpoint,
-          payload: envelope.payload,
-          status: "sent",
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        if (message.includes("410") || message.includes("404")) {
-          await this.repository.removePushSubscription(subscription.endpoint);
-        }
-        await this.repository.logNotification({
-          channel: "push",
-          target: subscription.endpoint,
-          payload: envelope.payload,
-          status: "failed",
-          error: message,
-        });
-      }
-    }
-  }
-
   private async dispatch(
     envelope: NotificationEnvelope,
     channels: NotificationChannel[],
@@ -165,9 +81,7 @@ export class NotificationService {
     const settings = await this.repository.getSettings();
     const tasks: Promise<void>[] = [];
 
-    if (channels.includes("webhook")) tasks.push(this.sendWebhook(envelope, settings));
     if (channels.includes("email")) tasks.push(this.sendEmail(envelope, settings));
-    if (channels.includes("push")) tasks.push(this.sendPush(envelope, settings));
 
     await Promise.all(tasks);
     this.bus.publish({
@@ -218,7 +132,7 @@ export class NotificationService {
     await this.dispatch(
       {
         title: "Hot Monitor 测试通知",
-        body: "这是一条测试消息，用于验证浏览器推送、Webhook 和邮件通知链路。",
+        body: "这是一条测试邮件，用于验证邮件通知链路。",
         tag: "test-notification",
         type: "test",
         payload: {

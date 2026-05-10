@@ -4,6 +4,8 @@ import { nowIso } from "../lib/utils.js";
 import { Repository } from "./repositories.js";
 import { ScanJobService } from "./scan-jobs.js";
 
+const SERVER_START_TIME = Date.now();
+
 export class MonitorScheduler {
   private timer: NodeJS.Timeout | null = null;
   private running = new Set<number>();
@@ -17,13 +19,29 @@ export class MonitorScheduler {
     if (!monitor.enabled) {
       return false;
     }
+    // Never auto-run a monitor that has never been run before.
+    // This prevents automatic scanning on startup for newly created monitors.
     if (!monitor.lastRunAt) {
-      return true;
+      return false;
     }
 
     const lastRunAt = new Date(monitor.lastRunAt).getTime();
-    const nextRunAt = lastRunAt + monitor.intervalMinutes * 60 * 1000;
-    return Date.now() >= nextRunAt;
+    const intervalMs = monitor.intervalMinutes * 60 * 1000;
+
+    // If the monitor was last run before this server started,
+    // reset the timer so it will run after one interval from server start.
+    // This ensures all monitors start their timers fresh when server restarts.
+    if (lastRunAt < SERVER_START_TIME) {
+      const timeSinceServerStart = Date.now() - SERVER_START_TIME;
+      const isDue = timeSinceServerStart >= intervalMs;
+      console.info(`[scheduler] monitor ${monitor.id} (${monitor.query}): lastRunAt=${monitor.lastRunAt}, serverStart=${new Date(SERVER_START_TIME).toISOString()}, timeSinceStart=${Math.round(timeSinceServerStart / 1000)}s, interval=${monitor.intervalMinutes}min, isDue=${isDue}`);
+      return isDue;
+    }
+
+    const nextRunAt = lastRunAt + intervalMs;
+    const isDue = Date.now() >= nextRunAt;
+    console.info(`[scheduler] monitor ${monitor.id} (${monitor.query}): lastRunAt=${monitor.lastRunAt}, nextRunAt=${new Date(nextRunAt).toISOString()}, isDue=${isDue}`);
+    return isDue;
   }
 
   private async tick(): Promise<void> {

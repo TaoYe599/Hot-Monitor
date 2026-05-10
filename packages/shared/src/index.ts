@@ -3,17 +3,29 @@ export type MonitorMode = "keyword" | "topic";
 export type SourceKind =
   | "twitter"
   | "search"
+  | "google"
   | "rss"
   | "github"
+  | "hackernews"
+  | "zhihu"
+  | "baidu"
+  | "weibo"
+  | "reddit"
   | "manual";
 
-export type NotificationChannel = "push" | "webhook" | "email";
+export type NotificationChannel = "email";
 
 export interface MonitorSourceConfig {
   twitter: boolean;
   search: boolean;
+  google: boolean;
   rss: boolean;
   github: boolean;
+  hackernews: boolean;
+  zhihu: boolean;
+  baidu: boolean;
+  weibo: boolean;
+  reddit: boolean;
 }
 
 export interface MonitorRecord {
@@ -87,7 +99,6 @@ export interface HotspotCluster {
 
 export interface SettingsRecord {
   id: number;
-  webhookUrls: string[];
   emailTo: string[];
   smtpHost: string | null;
   smtpPort: number | null;
@@ -95,20 +106,7 @@ export interface SettingsRecord {
   smtpUser: string | null;
   smtpPassword: string | null;
   smtpFrom: string | null;
-  vapidPublicKey: string | null;
-  vapidPrivateKey: string | null;
-  vapidSubject: string | null;
   updatedAt: string;
-}
-
-export interface PushSubscriptionRecord {
-  id: number;
-  endpoint: string;
-  keys: {
-    auth: string;
-    p256dh: string;
-  };
-  createdAt: string;
 }
 
 export interface DashboardSnapshot {
@@ -168,7 +166,6 @@ export interface MonitorFormInput {
 }
 
 export interface SettingsFormInput {
-  webhookUrls: string[];
   emailTo: string[];
   smtpHost: string | null;
   smtpPort: number | null;
@@ -176,9 +173,6 @@ export interface SettingsFormInput {
   smtpUser: string | null;
   smtpPassword: string | null;
   smtpFrom: string | null;
-  vapidPublicKey: string | null;
-  vapidPrivateKey: string | null;
-  vapidSubject: string | null;
 }
 
 export interface ScanSummary {
@@ -188,7 +182,7 @@ export interface ScanSummary {
   hotspots: HotspotCluster[];
 }
 
-export type ScanJobStatus = "queued" | "running" | "succeeded" | "failed";
+export type ScanJobStatus = "queued" | "running" | "succeeded" | "failed" | "cancelled";
 
 export type ScanJobTrigger = "manual" | "scheduler";
 
@@ -208,12 +202,77 @@ export interface ScanJobRecord {
 export const DEFAULT_SOURCE_CONFIG: MonitorSourceConfig = {
   twitter: true,
   search: true,
+  google: true,
   rss: true,
   github: true,
+  hackernews: true,
+  zhihu: true,
+  baidu: true,
+  weibo: true,
+  reddit: true,
 };
 
-export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannel[] = [
-  "push",
-  "webhook",
-  "email",
-];
+export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannel[] = ["email"];
+
+// ============== 排序和筛选类型 ==============
+
+export type EventSortField =
+  | "createdAt"
+  | "authenticityScore"
+  | "relevanceScore"
+  | "combinedScore"
+  | "sourceType";
+
+export type EventSortOrder = "asc" | "desc";
+
+export interface EventFilter {
+  monitorId?: number;
+  sourceTypes?: SourceKind[];
+  minAuthenticityScore?: number;
+  minRelevanceScore?: number;
+  status?: VerifiedEvent["status"];
+  timeRange?: "today" | "week" | "month" | "custom";
+  timeFrom?: string;
+  timeTo?: string;
+}
+
+export interface EventSortConfig {
+  field: EventSortField;
+  order: EventSortOrder;
+}
+
+export type HotspotSortField =
+  | "createdAt"
+  | "score"
+  | "diversityScore"
+  | "freshnessScore"
+  | "engagementScore"
+  | "coverage";
+
+export type HotspotSortOrder = "asc" | "desc";
+
+export interface HotspotFilter {
+  monitorId?: number;
+  minScore?: number;
+  minCoverage?: number;
+  timeRange?: "today" | "week" | "month" | "custom";
+  timeFrom?: string;
+  timeTo?: string;
+}
+
+export interface HotspotSortConfig {
+  field: HotspotSortField;
+  order: HotspotSortOrder;
+}
+
+export interface EventsQueryParams {
+  sort?: EventSortConfig;
+  filter?: EventFilter;
+  limit?: number;
+}
+
+export interface HotspotsQueryParams {
+  sort?: HotspotSortConfig;
+  filter?: HotspotFilter;
+  limit?: number;
+}

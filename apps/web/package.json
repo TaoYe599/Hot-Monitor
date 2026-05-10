@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node ../../scripts/wait-backend.js && vite",
+    "dev:no-wait": "vite",
     "build": "tsc -p tsconfig.app.json && vite build",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.app.json --noEmit"

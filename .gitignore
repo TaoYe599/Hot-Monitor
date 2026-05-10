@@ -12,3 +12,5 @@ apps/server/tmp
 .env.*.local
 .DS_Store
 Thumbs.db
+*.db
+*.db-journal

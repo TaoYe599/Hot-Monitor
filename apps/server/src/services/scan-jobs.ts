@@ -6,6 +6,15 @@ import type { LiveEventBus } from "../lib/event-bus.js";
 import { nowIso } from "../lib/utils.js";
 import { ScanRunner } from "./scan-runner.js";
 
+class ScanCancelledError extends Error {
+  constructor() {
+    super("Scan cancelled");
+    this.name = "ScanCancelledError";
+  }
+}
+
+export { ScanCancelledError };
+
 export class ScanJobService {
   private readonly jobs = new Map<string, ScanJobRecord>();
   private readonly activeByMonitorId = new Map<number, string>();
@@ -66,6 +75,22 @@ export class ScanJobService {
     return this.jobs.get(jobId);
   }
 
+  cancel(jobId: string): boolean {
+    const job = this.jobs.get(jobId);
+    if (!job) {
+      return false;
+    }
+    if (job.status !== "queued" && job.status !== "running") {
+      return false;
+    }
+    job.status = "cancelled";
+    job.finishedAt = nowIso();
+    this.publish(job);
+    this.runner.cancel(job.monitorId);
+    console.info(`[scan-job] cancelled ${job.id} for monitor ${job.monitorId}`);
+    return true;
+  }
+
   private publish(job: ScanJobRecord): void {
     this.bus.publish({
       type: "scan.job.updated",
@@ -105,11 +130,15 @@ export class ScanJobService {
         `[scan-job] succeeded ${queued.id} with ${summary.candidates} candidates, ${summary.acceptedEvents.length} events, ${summary.hotspots.length} hotspots`,
       );
     } catch (error) {
-      queued.status = "failed";
-      queued.finishedAt = nowIso();
-      queued.error = error instanceof Error ? error.message : String(error);
-      this.publish(queued);
-      console.error(`[scan-job] failed ${queued.id}: ${queued.error}`);
+      if (error instanceof ScanCancelledError) {
+        console.info(`[scan-job] ${queued.id} was cancelled`);
+      } else {
+        queued.status = "failed";
+        queued.finishedAt = nowIso();
+        queued.error = error instanceof Error ? error.message : String(error);
+        this.publish(queued);
+        console.error(`[scan-job] failed ${queued.id}: ${queued.error}`);
+      }
     } finally {
       this.activeByMonitorId.delete(monitor.id);
     }
