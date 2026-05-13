@@ -20,7 +20,7 @@ def request(path, method="GET", payload=None):
     req = urllib.request.Request(
         f"{DEFAULT_BASE_URL}{path}",
         data=data,
-        method=method,
+        method=method, 
         headers=headers,
     )
     try:

@@ -257,8 +257,10 @@ freshnessScore = max(0, 1 - (age_in_hours / max_age))
 
 ### 通知阈值
 
-- **shouldNotify = true**：仅当综合分数 ≥ 0.7
-- **shouldNotify = false**：分数 < 0.7
+- **shouldNotify = true**：AI 判断应通知（来源可信且分数较高）
+- **shouldNotify = false**：候选状态，等待进一步确认
+
+topic 模式下，即使 AI 未标记 shouldNotify，也会创建 score >= 0.3 的候选热点。
 
 ### 热点聚类
 

@@ -40,6 +40,10 @@ const envSchema = z.object({
   HOT_MONITOR_PORT: z.coerce.number().default(8787),
   HOT_MONITOR_PUBLIC_URL: z.string().default("http://localhost:8787"),
   HOT_MONITOR_DB_PATH: z.string().default("file:./apps/server/data/hot-monitor.db"),
+  // 评分阈值配置
+  PRE_FILTER_THRESHOLD: z.coerce.number().min(0).max(1).default(0.2),
+  RELEVANCE_THRESHOLD: z.coerce.number().min(0).max(1).default(0.4),
+  AUTHENTICITY_THRESHOLD: z.coerce.number().min(0).max(1).default(0.35),
 });
 
 export interface AppConfig {
@@ -60,6 +64,11 @@ export interface AppConfig {
   port: number;
   publicUrl: string;
   databasePath: string;
+  thresholds: {
+    preFilter: number;
+    relevance: number;
+    authenticity: number;
+  };
 }
 
 function splitCsv(value: string): string[] {
@@ -90,5 +99,10 @@ export function loadConfig(): AppConfig {
     port: env.HOT_MONITOR_PORT,
     publicUrl: env.HOT_MONITOR_PUBLIC_URL,
     databasePath: env.HOT_MONITOR_DB_PATH,
+    thresholds: {
+      preFilter: env.PRE_FILTER_THRESHOLD,
+      relevance: env.RELEVANCE_THRESHOLD,
+      authenticity: env.AUTHENTICITY_THRESHOLD,
+    },
   };
 }

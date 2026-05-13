@@ -35,12 +35,13 @@ const monitorFormSchema = z.object({
     .object({
       twitter: z.boolean().default(true),
       search: z.boolean().default(true),
-      google: z.boolean().default(true),
       rss: z.boolean().default(true),
       github: z.boolean().default(true),
       hackernews: z.boolean().default(true),
       zhihu: z.boolean().default(true),
       baidu: z.boolean().default(true),
+      weibo: z.boolean().default(true),
+      reddit: z.boolean().default(true),
     })
     .default(DEFAULT_SOURCE_CONFIG),
   notifyChannels: z
@@ -87,7 +88,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const notificationService =
     options.services?.notificationService ?? new NotificationService(repository, config, bus);
   const runner =
-    options.services?.runner ?? new ScanRunner(repository, sourceService, aiService, notificationService, bus);
+    options.services?.runner ?? new ScanRunner(repository, sourceService, aiService, notificationService, bus, config);
   const scanJobs = options.services?.scanJobs ?? new ScanJobService(runner, bus);
   const scheduler = options.services?.scheduler ?? new MonitorScheduler(repository, scanJobs);
 
@@ -145,7 +146,19 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const sort = parseHotspotSort(query);
     const filter = parseHotspotFilter(query);
     const limit = query.limit ? parseInt(query.limit, 10) : 30;
-    return repository.listHotspots(limit, sort, filter);
+    const offset = query.offset ? parseInt(query.offset, 10) : 0;
+
+    const { hotspots, total } = await repository.listHotspots(limit, sort, filter, offset);
+
+    // 获取每个热点关联的事件摘要
+    const hotspotsWithEvents = await Promise.all(
+      hotspots.map(async (hotspot) => {
+        const events = await repository.getEventsByClusterId(hotspot.id);
+        return { ...hotspot, events };
+      }),
+    );
+
+    return { hotspots: hotspotsWithEvents, total };
   });
   app.get("/api/scan-jobs", async () => scanJobs.list());
   app.get("/api/scan-jobs/:id", async (request, reply) => {
@@ -222,6 +235,27 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
     await notificationService.sendTestNotification(body.channels);
     return { ok: true };
+  });
+
+  // 批量操作 API
+  app.post("/api/events/batch-read", async (request) => {
+    const body = z
+      .object({
+        eventIds: z.array(z.number()).min(1),
+      })
+      .parse(request.body) as { eventIds: number[] };
+    await repository.batchMarkEventsRead(body.eventIds);
+    return { ok: true, count: body.eventIds.length };
+  });
+
+  app.delete("/api/events/batch", async (request) => {
+    const body = z
+      .object({
+        eventIds: z.array(z.number()).min(1),
+      })
+      .parse(request.body) as { eventIds: number[] };
+    await repository.batchDeleteEvents(body.eventIds);
+    return { ok: true, count: body.eventIds.length };
   });
 
   app.get("/api/stream", async (request, reply) => {

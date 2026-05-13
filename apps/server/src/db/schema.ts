@@ -1,4 +1,5 @@
 import type {
+  EngagementDetails,
   MonitorSourceConfig,
   NotificationChannel,
   VerificationEvidence,
@@ -38,9 +39,11 @@ export const eventsTable = sqliteTable(
     monitorId: integer("monitor_id").notNull(),
     title: text("title").notNull(),
     summary: text("summary").notNull(),
+    originalExcerpt: text("original_excerpt"),
     sourceUrl: text("source_url").notNull(),
     sourceType: text("source_type").notNull(),
     sourceLabel: text("source_label").notNull(),
+    author: text("author"),
     publishedAt: text("published_at"),
     authenticityScore: real("authenticity_score").notNull(),
     relevanceScore: real("relevance_score").notNull(),
@@ -50,6 +53,11 @@ export const eventsTable = sqliteTable(
     clusterId: integer("cluster_id"),
     status: text("status").notNull(),
     reason: text("reason").notNull(),
+    engagementDetails: text("engagement_details", { mode: "json" })
+      .$type<EngagementDetails | null>()
+      .notNull()
+      .$defaultFn(() => null),
+    isRead: integer("is_read", { mode: "boolean" }).notNull().default(false),
     createdAt: text("created_at").notNull(),
   },
   (table) => ({
@@ -73,6 +81,15 @@ export const hotspotsTable = sqliteTable("hotspots", {
   supportingUrls: text("supporting_urls", { mode: "json" })
     .$type<string[]>()
     .notNull(),
+  reason: text("reason"),
+  // 互动数据聚合
+  engagementAggregates: text("engagement_aggregates", { mode: "json" })
+    .$type<import("@hot-monitor/shared").HotspotEngagementAggregates | null>()
+    .$defaultFn(() => null),
+  // 原始来源中的最早发布时间
+  earliestPublishedAt: text("earliest_published_at"),
+  // 原始来源中的最新发布时间
+  latestPublishedAt: text("latest_published_at"),
   createdAt: text("created_at").notNull(),
 });
 

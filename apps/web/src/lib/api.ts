@@ -141,6 +141,7 @@ export const api = {
     sort?: HotspotSortConfig;
     filter?: HotspotFilter;
     limit?: number;
+    offset?: number;
   }) {
     const queryParams: Record<string, string | number | undefined> = {};
     if (params?.sort) {
@@ -157,10 +158,27 @@ export const api = {
       if (f.timeTo) queryParams.timeTo = f.timeTo;
     }
     if (params?.limit !== undefined) queryParams.limit = params.limit;
+    if (params?.offset !== undefined) queryParams.offset = params.offset;
 
     const queryString = buildQueryString(queryParams);
-    return request<import("@hot-monitor/shared").HotspotCluster[]>(
+    return request<import("@hot-monitor/shared").HotspotsResponse>(
       `/api/hotspots${queryString}`,
     );
+  },
+
+  // ============== 批量操作 API ==============
+
+  batchMarkEventsRead(eventIds: number[]) {
+    return request<{ ok: boolean; count: number }>("/api/events/batch-read", {
+      method: "POST",
+      body: JSON.stringify({ eventIds }),
+    });
+  },
+
+  batchDeleteEvents(eventIds: number[]) {
+    return request<{ ok: boolean; count: number }>("/api/events/batch", {
+      method: "DELETE",
+      body: JSON.stringify({ eventIds }),
+    });
   },
 };

@@ -18,7 +18,6 @@ export type NotificationChannel = "email";
 export interface MonitorSourceConfig {
   twitter: boolean;
   search: boolean;
-  google: boolean;
   rss: boolean;
   github: boolean;
   hackernews: boolean;
@@ -58,6 +57,7 @@ export interface SourceItem {
   trustScore: number;
   tags: string[];
   raw: Record<string, unknown>;
+  engagementDetails?: EngagementDetails | null;
 }
 
 export interface VerificationEvidence {
@@ -65,14 +65,33 @@ export interface VerificationEvidence {
   reason: string;
 }
 
+// 各平台详细互动数据
+export interface EngagementDetails {
+  // Twitter/X 特有
+  likes?: number;
+  retweets?: number;
+  replies?: number;
+  views?: number;
+  // Hacker News 特有
+  points?: number;
+  // Reddit 特有
+  upvotes?: number;
+  downvotes?: number;
+  score?: number;
+  // 通用
+  comments?: number;
+}
+
 export interface VerifiedEvent {
   id: number;
   monitorId: number;
   title: string;
   summary: string;
+  originalExcerpt: string | null;
   sourceUrl: string;
   sourceType: SourceKind;
   sourceLabel: string;
+  author: string | null;
   publishedAt: string | null;
   authenticityScore: number;
   relevanceScore: number;
@@ -80,7 +99,26 @@ export interface VerifiedEvent {
   clusterId: number | null;
   status: "accepted" | "rejected";
   reason: string;
+  engagementDetails: EngagementDetails | null;
+  isRead: boolean;
   createdAt: string;
+}
+
+// 热点互动数据聚合（从多个来源聚合）
+export interface HotspotEngagementAggregates {
+  totalLikes?: number;
+  totalRetweets?: number;
+  totalReplies?: number;
+  totalViews?: number;
+  totalPoints?: number;
+  totalUpvotes?: number;
+  totalDownvotes?: number;
+  totalComments?: number;
+  totalScore?: number;
+  maxLikes?: number;
+  maxRetweets?: number;
+  maxViews?: number;
+  maxComments?: number;
 }
 
 export interface HotspotCluster {
@@ -94,7 +132,27 @@ export interface HotspotCluster {
   engagementScore: number;
   status: "notified" | "candidate";
   supportingUrls: string[];
+  reason?: string;
+  // 互动数据聚合
+  engagementAggregates?: HotspotEngagementAggregates | null;
+  // 原始来源中的最早/最新发布时间
+  earliestPublishedAt?: string | null;
+  latestPublishedAt?: string | null;
   createdAt: string;
+}
+
+// 热点簇关联的事件摘要（轻量级展示）
+export interface HotspotEventSummary {
+  id: number;
+  title: string;
+  sourceUrl: string;
+  sourceType: SourceKind;
+  sourceLabel: string;
+  author: string | null;
+  publishedAt: string | null;
+  authenticityScore: number;
+  relevanceScore: number;
+  engagementDetails?: EngagementDetails | null;
 }
 
 export interface SettingsRecord {
@@ -127,10 +185,13 @@ export interface VerifyKeywordInput {
   candidate: SourceItem;
 }
 
+export type MatchType = "direct" | "semantic" | "indirect";
+
 export interface VerifyKeywordOutput {
   isMatch: boolean;
   authenticityScore: number;
   relevanceScore: number;
+  matchType?: MatchType;
   reason: string;
   summary: string;
   evidence: VerificationEvidence[];
@@ -139,6 +200,7 @@ export interface VerifyKeywordOutput {
 export interface HotspotClusterInput {
   monitor: Pick<MonitorRecord, "name" | "query" | "mode">;
   candidates: SourceItem[];
+  reason?: string;
 }
 
 export interface HotspotClusterOutput {
@@ -178,6 +240,8 @@ export interface SettingsFormInput {
 export interface ScanSummary {
   monitorId: number;
   candidates: number;
+  preFilteredCount: number;
+  filteredCount: number;
   acceptedEvents: VerifiedEvent[];
   hotspots: HotspotCluster[];
 }
@@ -202,7 +266,6 @@ export interface ScanJobRecord {
 export const DEFAULT_SOURCE_CONFIG: MonitorSourceConfig = {
   twitter: true,
   search: true,
-  google: true,
   rss: true,
   github: true,
   hackernews: true,
@@ -275,4 +338,10 @@ export interface HotspotsQueryParams {
   sort?: HotspotSortConfig;
   filter?: HotspotFilter;
   limit?: number;
+  offset?: number;
+}
+
+export interface HotspotsResponse {
+  hotspots: (HotspotCluster & { events: HotspotEventSummary[] })[];
+  total: number;
 }

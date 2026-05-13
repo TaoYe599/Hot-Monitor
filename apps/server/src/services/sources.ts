@@ -1,4 +1,4 @@
-import type { MonitorRecord, SourceItem, SourceKind } from "@hot-monitor/shared";
+import type { EngagementDetails, MonitorRecord, SourceItem, SourceKind } from "@hot-monitor/shared";
 import Parser from "rss-parser";
 import { load } from "cheerio";
 
@@ -225,6 +225,78 @@ function estimateEngagement(sourceKind: SourceKind, raw: Record<string, unknown>
   return 0.35;
 }
 
+/**
+ * 从原始数据中提取各平台的详细互动数据
+ */
+function extractEngagementDetails(sourceKind: SourceKind, raw: Record<string, unknown>): EngagementDetails | null {
+  switch (sourceKind) {
+    case "twitter": {
+      // 支持多种字段名格式：驼峰（likeCount）和 snake_case（like_count）
+      const likeCount = Number(
+        raw.likeCount ?? raw.like_count ?? raw.likes ?? 0,
+      );
+      const retweetCount = Number(
+        raw.retweetCount ?? raw.retweet_count ?? raw.retweets ?? 0,
+      );
+      const viewCount = Number(
+        raw.viewCount ?? raw.view_count ?? raw.views ?? raw.impression_count ?? 0,
+      );
+      const replyCount = Number(
+        raw.replyCount ?? raw.reply_count ?? raw.replies ?? 0,
+      );
+      // 只有当有实际数据时才返回
+      if (likeCount === 0 && retweetCount === 0 && viewCount === 0 && replyCount === 0) {
+        return null;
+      }
+      return {
+        likes: likeCount,
+        retweets: retweetCount,
+        views: viewCount,
+        replies: replyCount,
+      };
+    }
+    case "hackernews": {
+      const points = Number(raw.points ?? 0);
+      const numComments = Number(raw.num_comments ?? 0);
+      if (points === 0 && numComments === 0) {
+        return null;
+      }
+      return {
+        points,
+        comments: numComments,
+      };
+    }
+    case "reddit": {
+      const score = Number(raw.score ?? 0);
+      const numComments = Number(raw.num_comments ?? 0);
+      const ups = Number(raw.ups ?? score);
+      const downs = Number(raw.downs ?? 0);
+      if (score === 0 && numComments === 0) {
+        return null;
+      }
+      return {
+        score,
+        upvotes: ups,
+        downvotes: downs,
+        comments: numComments,
+      };
+    }
+    case "zhihu": {
+      const voteCount = Number(raw.vote_count ?? 0);
+      const commentCount = Number(raw.comment_count ?? 0);
+      if (voteCount === 0 && commentCount === 0) {
+        return null;
+      }
+      return {
+        likes: voteCount,
+        comments: commentCount,
+      };
+    }
+    default:
+      return null;
+  }
+}
+
 async function collectTwitter(config: AppConfig, monitor: MonitorRecord): Promise<SourceItem[]> {
   if (!config.twitterApiKey) {
     console.warn("[twitter] API key not configured");
@@ -319,6 +391,7 @@ async function collectTwitter(config: AppConfig, monitor: MonitorRecord): Promis
           trustScore,
           tags: [],
           raw: tweet,
+          engagementDetails: extractEngagementDetails("twitter", tweet),
         });
       }
     } catch {
@@ -520,6 +593,7 @@ async function collectHackerNews(monitor: MonitorRecord): Promise<SourceItem[]> 
             trustScore: scoreDomainTrust(hit.url, 0.88),
             tags: [],
             raw: hit as unknown as Record<string, unknown>,
+            engagementDetails: extractEngagementDetails("hackernews", { points: hit.points, num_comments: hit.num_comments } as Record<string, unknown>),
           });
         }
       } catch {
@@ -539,15 +613,15 @@ async function collectZhihu(monitor: MonitorRecord): Promise<SourceItem[]> {
     variants.map(async (variant) => {
       const candidates: SourceItem[] = [];
       try {
-        const url = `https://www.zhihu.com/api/v4/search_v3?t=general&q=${encodeURIComponent(variant)}&correction=1&offset=0&limit=20&filter_fields=&lc_idx=0&show_all_topics=0`;
-
-        const response = await fetchWithTimeout(url, {
+        // 尝试使用知乎热榜 API（不需要认证）
+        const hotUrl = `https://www.zhihu.com/api/v3/follow/topics/hot-list-api?desktop=true&limit=20&offset=0`;
+        const response = await fetchWithTimeout(hotUrl, {
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Referer": "https://www.zhihu.com",
-            "X-API-VERSION": "3.0.91",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json",
+            "Referer": "https://www.zhihu.com/",
           },
-        });
+        }, 15000);
 
         if (!response.ok) {
           return candidates;
@@ -555,52 +629,46 @@ async function collectZhihu(monitor: MonitorRecord): Promise<SourceItem[]> {
 
         const data = (await response.json()) as {
           data?: Array<{
-            object?: {
-              question?: { title?: string; url?: string };
-              answer?: { excerpt?: string; created_time?: number; voteup_count?: number; comment_count?: number };
-              article?: { title?: string; excerpt?: string; created_at?: number; voteup_count?: number };
-              type?: string;
-            };
+            id?: string;
+            question?: { title?: string; url?: string };
+            excerpt?: string;
+            vote_count?: number;
+            comment_count?: number;
+            created_time?: number;
+            type?: string;
           }>;
         };
 
         const items = data?.data ?? [];
 
-        for (const item of items.slice(0, 6)) {
-          const obj = item.object;
-          if (!obj) continue;
+        // 过滤与监控关键词相关的内容
+        const queryLower = variant.toLowerCase();
 
-          if (obj.question && obj.answer) {
-            candidates.push({
-              sourceKind: "zhihu",
-              sourceLabel: "知乎",
-              title: compactText(obj.question.title ?? "Untitled", 120),
-              url: normalizeUrl(obj.question.url ?? ""),
-              publishedAt: obj.answer.created_time ? new Date(obj.answer.created_time * 1000).toISOString() : null,
-              author: null,
-              excerpt: compactText(obj.answer.excerpt ?? "", 220),
-              content: compactText(obj.answer.excerpt ?? "", 1000),
-              engagementScore: Math.min(1, ((obj.answer.voteup_count ?? 0) * 0.001) + ((obj.answer.comment_count ?? 0) * 0.002)),
-              trustScore: scoreDomainTrust("zhihu.com", 0.8),
-              tags: [],
-              raw: obj as unknown as Record<string, unknown>,
-            });
-          } else if (obj.article) {
-            candidates.push({
-              sourceKind: "zhihu",
-              sourceLabel: "知乎",
-              title: compactText(obj.article.title ?? "Untitled", 120),
-              url: normalizeUrl(`https://zhuanlan.zhihu.com/p/${obj.article?.title ?? ""}`),
-              publishedAt: obj.article.created_at ? new Date(obj.article.created_at * 1000).toISOString() : null,
-              author: null,
-              excerpt: compactText(obj.article.excerpt ?? "", 220),
-              content: compactText(obj.article.excerpt ?? "", 1000),
-              engagementScore: Math.min(1, (obj.article.voteup_count ?? 0) * 0.001),
-              trustScore: scoreDomainTrust("zhihu.com", 0.8),
-              tags: [],
-              raw: obj as unknown as Record<string, unknown>,
-            });
-          }
+        for (const item of items.slice(0, 10)) {
+          const questionTitle = item.question?.title ?? "";
+          const excerpt = item.excerpt ?? "";
+
+          // 检查是否匹配监控关键词
+          const matchesQuery = questionTitle.toLowerCase().includes(queryLower) ||
+                             excerpt.toLowerCase().includes(queryLower);
+
+          if (!matchesQuery) continue;
+
+          candidates.push({
+            sourceKind: "zhihu",
+            sourceLabel: "知乎",
+            title: compactText(questionTitle || "知乎热榜", 120),
+            url: normalizeUrl(item.question?.url ?? `https://www.zhihu.com/question/${item.id}`),
+            publishedAt: item.created_time ? new Date(item.created_time * 1000).toISOString() : null,
+            author: null,
+            excerpt: compactText(excerpt, 220),
+            content: compactText(excerpt, 1000),
+            engagementScore: Math.min(1, ((item.vote_count ?? 0) * 0.001) + ((item.comment_count ?? 0) * 0.002)),
+            trustScore: scoreDomainTrust("zhihu.com", 0.8),
+            tags: [],
+            raw: item as unknown as Record<string, unknown>,
+            engagementDetails: extractEngagementDetails("zhihu", { vote_count: item.vote_count, comment_count: item.comment_count } as Record<string, unknown>),
+          });
         }
       } catch {
         // 静默失败，由上层汇总处理
@@ -622,22 +690,81 @@ async function collectBaidu(monitor: MonitorRecord): Promise<SourceItem[]> {
         const url = `https://www.baidu.com/s?wd=${encodeURIComponent(variant)}&rn=10&ie=utf-8`;
         const response = await fetchWithTimeout(url, {
           headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
           },
-        });
+        }, 20000);
 
         if (!response.ok) {
           return candidates;
         }
 
-        const html = response.text();
-        const $ = load(await html);
+        const html = await response.text();
+        const $ = load(html);
 
-        $(".result").each((_, element) => {
-          const titleEl = $(element).find("h3 a").first();
-          const title = titleEl.text().trim();
-          const url = titleEl.attr("href") ?? "";
-          const snippet = $(element).find(".c-abstract, .content-right_8Zs40").first().text().trim();
+        // 百度搜索结果有多种可能的容器，尝试多种选择器
+        const resultSelectors = [
+          ".result",
+          ".c-container",
+          "[class*='result']",
+          "div[data-block-id]",
+        ];
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const $any = $ as any;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        let results: any = null;
+
+        for (const selector of resultSelectors) {
+          const found = $(selector);
+          if (found.length > 0) {
+            results = found;
+            break;
+          }
+        }
+
+        if (!results) {
+          return candidates;
+        }
+
+        results.each(function(_index: number, element: unknown) {
+          const titleEl = $any(element).find("h3 a, .t a, [class*='title'] a").first();
+          const title = titleEl.text().trim() || $any(element).find("h3, .t, [class*='title']").first().text().trim();
+
+          // 尝试多种链接获取方式
+          let url = titleEl.attr("href") || "";
+
+          // 百度搜索结果链接通常是重定向链接
+          // 如果获取不到直接链接，尝试从 data-url 或其他属性获取
+          if (!url || url === "#") {
+            url = $any(element).find("a").first().attr("href") || "";
+          }
+
+          // 尝试多种摘要选择器
+          const snippetSelectors = [
+            ".c-abstract",
+            ".content-right_8Zs40",
+            ".c-span-last",
+            "[class*='abstract']",
+            "[class*='snippet']",
+            ".c-gap-top-small",
+          ];
+
+          let snippet = "";
+          for (const sel of snippetSelectors) {
+            const found = $any(element).find(sel).first().text().trim();
+            if (found) {
+              snippet = found;
+              break;
+            }
+          }
+
+          // 如果还是没有摘要，获取所有文本内容
+          if (!snippet) {
+            const paragraphs = $any(element).find("p").map((_: number, p: unknown) => $any(p).text()).get();
+            snippet = paragraphs.join(" ").trim();
+          }
 
           if (title && url) {
             candidates.push({
@@ -706,6 +833,8 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
               subreddit?: string;
               score?: number;
               num_comments?: number;
+              ups?: number;
+              downs?: number;
               selftext?: string;
               is_self?: boolean;
               link_flair_text?: string;
@@ -749,6 +878,7 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
           trustScore: score >= 100 ? 0.85 : score >= 50 ? 0.78 : 0.7,
           tags: p.link_flair_text ? [p.link_flair_text] : [],
           raw: p as unknown as Record<string, unknown>,
+          engagementDetails: extractEngagementDetails("reddit", { score: p.score, num_comments: p.num_comments, ups: p.ups, downs: p.downs } as Record<string, unknown>),
         });
       }
     } catch {
@@ -783,6 +913,8 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
               subreddit?: string;
               score?: number;
               num_comments?: number;
+              ups?: number;
+              downs?: number;
               selftext?: string;
               is_self?: boolean;
               link_flair_text?: string;
@@ -816,6 +948,7 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
           trustScore: score >= 100 ? 0.85 : score >= 50 ? 0.78 : 0.7,
           tags: p.link_flair_text ? [p.link_flair_text] : [],
           raw: p as unknown as Record<string, unknown>,
+          engagementDetails: extractEngagementDetails("reddit", { score: p.score, num_comments: p.num_comments, ups: p.ups, downs: p.downs } as Record<string, unknown>),
         });
       }
     } catch {
@@ -826,84 +959,34 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
   return candidates;
 }
 
-async function collectGoogle(monitor: MonitorRecord): Promise<SourceItem[]> {
-  const variants = generateQueryVariants(monitor).slice(0, 2);
-
-  const variantResults = await Promise.all(
-    variants.map(async (variant) => {
-      const candidates: SourceItem[] = [];
-      try {
-        const url = `https://www.google.com/search?q=${encodeURIComponent(variant)}&tbm=nws&num=10`;
-        const response = await fetchWithTimeout(url, {
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-          },
-        });
-
-        if (!response.ok) {
-          return candidates;
-        }
-
-        const html = await response.text();
-        const $ = load(html);
-
-        $("div.SoaBEf").each((_, element) => {
-          const titleEl = $(element).find("div.MBeuO").first();
-          const linkEl = $(element).find("a");
-          const snippetEl = $(element).find("div.GI74Re").first();
-          const sourceEl = $(element).find("div.CEMjEf span").first();
-
-          const title = titleEl.text().trim();
-          const link = linkEl.attr("href") ?? "";
-          const snippet = snippetEl.text().trim();
-          const source = sourceEl.text().trim();
-
-          if (title) {
-            candidates.push({
-              sourceKind: "google",
-              sourceLabel: "Google News",
-              title: compactText(title, 120),
-              url: normalizeUrl(link.startsWith("/") ? `https://www.google.com${link}` : link),
-              publishedAt: null,
-              author: source || null,
-              excerpt: compactText(snippet, 220),
-              content: compactText(`${title} ${snippet}`, 1000),
-              engagementScore: 0.45,
-              trustScore: scoreDomainTrust("google.com", 0.82),
-              tags: [],
-              raw: { title, link, snippet, source } as unknown as Record<string, unknown>,
-            });
-          }
-        });
-      } catch {
-        // 静默失败，由上层汇总处理
-      }
-      return candidates;
-    }),
-  );
-
-  return variantResults.flat();
-}
-
 export class SourceService {
   constructor(private readonly config: AppConfig) {}
 
-  async collect(monitor: MonitorRecord): Promise<SourceItem[]> {
+  async collect(
+    monitor: MonitorRecord,
+    isCancelled?: () => boolean,
+  ): Promise<SourceItem[]> {
     const results: SourceResult[] = [];
 
     const tasks: Array<{ name: string; promise: Promise<SourceItem[]> }> = [];
 
+    if (isCancelled?.()) return [];
     if (monitor.sources.twitter) tasks.push({ name: "Twitter", promise: collectTwitter(this.config, monitor) });
+    if (isCancelled?.()) return [];
     if (monitor.sources.search) tasks.push({ name: "Search (DuckDuckGo + Google)", promise: collectSearch(monitor) });
-    if (monitor.sources.google) tasks.push({ name: "Google News", promise: collectGoogle(monitor) });
+    if (isCancelled?.()) return [];
     if (monitor.sources.rss) tasks.push({ name: "Official RSS Feeds", promise: collectFeeds(monitor, OFFICIAL_FEEDS, "rss") });
+    if (isCancelled?.()) return [];
     if (monitor.sources.github) tasks.push({ name: "GitHub Releases", promise: collectFeeds(monitor, GITHUB_RELEASE_FEEDS, "github") });
+    if (isCancelled?.()) return [];
     if (monitor.sources.hackernews) tasks.push({ name: "Hacker News", promise: collectHackerNews(monitor) });
+    if (isCancelled?.()) return [];
     if (monitor.sources.zhihu) tasks.push({ name: "知乎", promise: collectZhihu(monitor) });
+    if (isCancelled?.()) return [];
     if (monitor.sources.baidu) tasks.push({ name: "百度搜索", promise: collectBaidu(monitor) });
+    if (isCancelled?.()) return [];
     if (monitor.sources.reddit) tasks.push({ name: "Reddit", promise: collectReddit(monitor) });
+    if (isCancelled?.()) return [];
 
     // 并行执行所有来源收集，同时记录结果
     const allResults = await Promise.all(

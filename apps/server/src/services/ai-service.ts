@@ -11,13 +11,48 @@ import {
   buildQueryTerms,
   compactText,
   computeFreshnessScore,
+  expandQuery,
   keywordDensity,
+  keywordDensityWithExpansion,
 } from "../lib/utils.js";
+
+// ============================================================
+// Step 1: 相关性判断 Schema
+// ============================================================
+const relevanceSchema = z.object({
+  isRelated: z.boolean(),
+  relevanceScore: z.number().min(0).max(1),
+  matchType: z.enum(["direct", "semantic", "indirect"]),
+  evidence: z.object({
+    matchedTerms: z.array(z.string()),
+    context: z.string(),
+  }),
+  reason: z.string(),
+});
+
+// ============================================================
+// Step 2: 真实性判断 Schema
+// ============================================================
+const verifyAuthenticitySchema = z.object({
+  isAuthentic: z.boolean(),
+  authenticityScore: z.number().min(0).max(1),
+  summary: z.string(),
+  reason: z.string(),
+  evidence: z
+    .array(
+      z.object({
+        quote: z.string(),
+        reason: z.string(),
+      }),
+    )
+    .max(3),
+});
 
 const verifyKeywordSchema = z.object({
   isMatch: z.boolean(),
   authenticityScore: z.number().min(0).max(1),
   relevanceScore: z.number().min(0).max(1),
+  matchType: z.enum(["direct", "semantic", "indirect"]).optional(),
   reason: z.string(),
   summary: z.string(),
   evidence: z
@@ -208,7 +243,7 @@ export class AiService {
       0,
       Math.min(1, (candidate.trustScore * 0.55) + (computeFreshnessScore(candidate.publishedAt) * 0.2) + 0.25 - suspicion),
     );
-    const isMatch = relevance >= 0.55 && authenticity >= 0.45;
+    const isMatch = relevance >= 0.4 && authenticity >= 0.35;
 
     return {
       isMatch,
@@ -235,14 +270,120 @@ export class AiService {
     monitor: Pick<MonitorRecord, "name" | "query">,
     candidate: SourceItem,
   ): Promise<VerifyKeywordOutput> {
-    const structured = await this.postStructuredPrompt(
-      "verify_keyword_candidate",
-      verifyKeywordSchema,
+    let structured: z.infer<typeof verifyKeywordSchema> | null | undefined;
+    try {
+      structured = await this.postStructuredPrompt(
+        "verify_keyword_candidate",
+        verifyKeywordSchema,
+        [
+          {
+            role: "system",
+            content:
+              "你验证一条内容是否值得被监控系统捕获。请适度宽松判断，只要内容与监控关键词有一定关联且看起来是真实内容就应该通过。\n\n**宽松原则**：\n- 如果标题或正文包含关键词，或者讨论关键词所在领域/相关话题 -> isMatch=true\n- 如果内容来自可信来源（trustScore >= 0.5）且与关键词相关 -> isMatch=true\n- 只有在内容明显不相关、完全是广告、或明确标注为恶搞/假消息时才拒绝\n\n**matchType 判断**：\n- direct: 标题或正文直接提到关键词\n- semantic: 没有直接提关键词，但讨论同一领域/竞品/相关技术\n- indirect: 关联公司/产品中提及\n\n**authenticity 判断**：\n- 如果内容看起来像正常的新闻/博客/讨论 -> isAuthentic=true\n- 只要内容不是明确标注的假消息 -> isAuthentic=true\n- 可以接受：社交媒体讨论、评测文章、分析报告、技术博客\n\n**summary 生成规则（重要）**：\n- 生成摘要时，**必须保留英文专有名词的原始拼写**，不要翻译成中文\n- 例如：关键词 \"Harness\" → 摘要中仍写 \"Harness\"，不要写成 \"马具\"\n- 例如：关键词 \"Cursor\" → 摘要中仍写 \"Cursor\"，不要写成 \"光标\"\n- 常见要保留的词汇：框架名、工具名、品牌名、公司名、项目名等专有名词\n- 如果原标题是英文，可以直接使用原标题作为摘要主体\n- 可以用中文解释内容，但专有名词必须保留英文原形",
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              monitor,
+              candidate: {
+                sourceKind: candidate.sourceKind,
+                sourceLabel: candidate.sourceLabel,
+                title: candidate.title,
+                url: candidate.url,
+                publishedAt: candidate.publishedAt,
+                author: candidate.author,
+                excerpt: candidate.excerpt,
+                content: compactText(candidate.content, 2800),
+                trustScore: candidate.trustScore,
+                engagementScore: candidate.engagementScore,
+              },
+            }),
+          },
+        ],
+      );
+    } catch (err) {
+      console.warn(`[ai] verifyKeywordCandidate failed, falling back to heuristic: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    return structured ?? this.heuristicVerify(monitor, candidate);
+  }
+
+  /**
+   * Step 1: 使用 AI 判断内容与关键词的相关性
+   */
+  async checkRelevance(
+    monitor: Pick<MonitorRecord, "name" | "query">,
+    candidate: SourceItem,
+  ) {
+    const expandedTerms = expandQuery(monitor.query);
+
+    return this.postStructuredPrompt(
+      "check_relevance",
+      relevanceSchema,
       [
         {
           role: "system",
-          content:
-            "You validate whether a candidate signal is a real, monitor-worthy update. Reject rumors, concept art, reposts without substance, and tangential mentions. Return concise evidence.",
+          content: `你是一个关键词相关性分析专家。请适度宽松判断，只要内容与监控关键词有一定关联就认为相关。
+
+**宽松原则**：
+- 标题提到关键词 -> direct
+- 正文讨论关键词所在领域/应用/竞品 -> direct 或 semantic
+- 仅在列表/排行中简单提及 -> 如果正文有相关内容也可以接受
+- 只有内容完全没有提到关键词且不在同一领域时才拒绝
+
+**matchType 判断标准**：
+- direct: 标题或正文直接提到关键词，或讨论关键词的直接变化/更新
+- semantic: 没有直接提到关键词，但讨论的是同一领域/竞品/相关技术
+- indirect: 仅在关联公司、关联产品的背景下提及`,
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            monitor: {
+              name: monitor.name,
+              query: monitor.query,
+              expandedTerms,
+            },
+            candidate: {
+              title: candidate.title,
+              excerpt: candidate.excerpt,
+              content: compactText(candidate.content, 2000),
+              url: candidate.url,
+            },
+          }),
+        },
+      ],
+    );
+  }
+
+  /**
+   * Step 2: 使用 AI 判断内容的真实性（仅在相关性判断通过后调用）
+   */
+  async checkAuthenticity(
+    monitor: Pick<MonitorRecord, "name" | "query">,
+    candidate: SourceItem,
+  ) {
+    return this.postStructuredPrompt(
+      "check_authenticity",
+      verifyAuthenticitySchema,
+      [
+        {
+          role: "system",
+          content: `你是一个信息真实性验证专家。请宽松判断，只拒绝明显的虚假内容。
+
+应该接受的内容：
+- 官方公告、技术博客发布的内容
+- 新闻媒体报道的内容
+- 社交媒体上的分享和讨论
+- 评测文章和分析
+
+应该拒绝的内容（需要明确证据）：
+- 明确标注为"恶搞"、"parody"、"fake"、"谣言"的内容
+- 明确说明是"概念验证"但无法验证的内容
+
+关键原则：
+- 如果内容看起来像是正常的新闻/博客/讨论，应该接受
+- 如果无法确定，宁可接受也不要过度拒绝`,
         },
         {
           role: "user",
@@ -264,8 +405,6 @@ export class AiService {
         },
       ],
     );
-
-    return structured ?? this.heuristicVerify(monitor, candidate);
   }
 
   private heuristicDiscover(
@@ -306,14 +445,16 @@ export class AiService {
     monitor: Pick<MonitorRecord, "name" | "query">,
     candidates: SourceItem[],
   ): Promise<HotspotClusterOutput[]> {
-    const structured = await this.postStructuredPrompt(
-      "discover_hotspots",
-      discoverHotspotsSchema,
-      [
-        {
-          role: "system",
-          content:
-            `你是一个AI热点信号梳理专家。请将候选内容整理为4到8个高价值热点，每个热点需要给出简短的label（中文标题，不带编号或前缀）和Summary（中文描述）。
+    let structured: z.infer<typeof discoverHotspotsSchema> | null | undefined;
+    try {
+      structured = await this.postStructuredPrompt(
+        "discover_hotspots",
+        discoverHotspotsSchema,
+        [
+          {
+            role: "system",
+            content:
+              `你是一个AI热点信号梳理专家。请将候选内容整理为4到8个高价值热点，每个热点需要给出简短的label（中文标题，不带编号或前缀）和Summary（中文描述）。
 
 **评分标准（必须严格执行）：**
 - score: 综合热度评分，0.0-1.0。计算方式：(信任分×0.4 + 互动分×0.3 + 新鲜分×0.3)
@@ -330,25 +471,28 @@ export class AiService {
 - 官方发布的重要更新 + 多平台报道 → score 0.75-0.95
 - 单个来源的普通更新 → score 0.5-0.65
 - 重复或低质量内容 → score 0.3-0.5`,
-        },
-        {
-          role: "user",
-          content: JSON.stringify({
-            monitor,
-            candidates: candidates.slice(0, 16).map((candidate) => ({
-              sourceKind: candidate.sourceKind,
-              sourceLabel: candidate.sourceLabel,
-              title: candidate.title,
-              url: candidate.url,
-              publishedAt: candidate.publishedAt,
-              excerpt: candidate.excerpt,
-              trustScore: candidate.trustScore,
-              engagementScore: candidate.engagementScore,
-            })),
-          }),
-        },
-      ],
-    );
+          },
+          {
+            role: "user",
+            content: JSON.stringify({
+              monitor,
+              candidates: candidates.slice(0, 16).map((candidate) => ({
+                sourceKind: candidate.sourceKind,
+                sourceLabel: candidate.sourceLabel,
+                title: candidate.title,
+                url: candidate.url,
+                publishedAt: candidate.publishedAt,
+                excerpt: candidate.excerpt,
+                trustScore: candidate.trustScore,
+                engagementScore: candidate.engagementScore,
+              })),
+            }),
+          },
+        ],
+      );
+    } catch (err) {
+      console.warn(`[ai] discoverHotspots failed, falling back to heuristic: ${err instanceof Error ? err.message : String(err)}`);
+    }
 
     return structured?.clusters ?? this.heuristicDiscover(monitor, candidates);
   }

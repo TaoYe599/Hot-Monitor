@@ -9,6 +9,15 @@ self.addEventListener("message", (event) => {
         self.skipWaiting();
     }
 });
+// 检测到新版本时立即通知客户端
+self.addEventListener("controllerchange", () => {
+    // 通知所有客户端刷新页面
+    self.clients.matchAll({ type: "window" }).then((clients) => {
+        clients.forEach((client) => {
+            client.postMessage({ type: "SW_UPDATED" });
+        });
+    });
+});
 self.addEventListener("push", (event) => {
     const data = event.data?.json();
     event.waitUntil(self.registration.showNotification(data?.title ?? "Hot Monitor", {

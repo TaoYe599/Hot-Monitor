@@ -13,6 +13,114 @@ export function buildQueryTerms(query: string): string[] {
     .filter((term) => term.length > 1);
 }
 
+/**
+ * Query Expansion - 关键词拓展策略
+ *
+ * 将单个关键词拆分为多个变体，用于提高检索召回率：
+ * - 核心词拆分："Claude Opus 4" → ["Claude", "Opus", "4", "claude opus 4"]
+ * - 版本号变体："v1.2.3" → ["v1.2.3", "1.2.3", "v1.2", "1.2"]
+ * - 常见变体："OpenAI" → ["OpenAI", "Open AI"]
+ * - 去重和清理
+ */
+export function expandQuery(query: string): string[] {
+  const variants = new Set<string>();
+
+  // 规范化：去除多余空格，转小写
+  const normalized = query.trim().toLowerCase();
+  if (normalized) {
+    variants.add(normalized);
+  }
+
+  // 拆分词组，每个词都作为独立变体
+  const words = normalized.split(/\s+/).filter((w) => w.length > 0);
+
+  // 添加每个独立词作为变体（用于预过滤）
+  for (const word of words) {
+    if (word.length > 1) {
+      variants.add(word);
+    }
+  }
+
+  // 处理版本号变体：v1.2.3, 1.2.3, v1.2, 1.2
+  const versionPattern = /v?(\d+[\d.-]*)/gi;
+  let match;
+  while ((match = versionPattern.exec(normalized)) !== null) {
+    const version = match[1];
+    // 添加带v和不带v的完整版本号
+    if (version.includes(".")) {
+      variants.add(`v${version}`);
+      variants.add(version);
+      // 添加主版本号
+      const parts = version.split(".");
+      if (parts.length >= 2) {
+        variants.add(`v${parts[0]}.${parts[1]}`);
+        variants.add(`${parts[0]}.${parts[1]}`);
+      }
+    }
+  }
+
+  // 常见品牌/公司名称变体
+  const knownVariants: Record<string, string[]> = {
+    openai: ["openai", "open ai", "open-ai"],
+    anthropic: ["anthropic"],
+    claude: ["claude"],
+    chatgpt: ["chatgpt", "chat gpt", "gpt", "gpt-4", "gpt4"],
+    "gpt-4": ["gpt-4", "gpt4", "gpt 4"],
+    "gpt5": ["gpt-5", "gpt5", "gpt 5"],
+    gemini: ["gemini", "google gemini"],
+    llama: ["llama", "meta llama", "llama2", "llama-2", "llama3", "llama-3"],
+    mistral: ["mistral", "mistral ai"],
+    deepseek: ["deepseek", "deep seek"],
+    qwen: ["qwen", "qwen-turbo"],
+    stable_diffusion: ["stable diffusion", "stability ai", "sdxl"],
+    dalle: ["dall-e", "dalle", "dall e"],
+  };
+
+  for (const [key, values] of Object.entries(knownVariants)) {
+    if (normalized.includes(key.replace(/_/g, " "))) {
+      values.forEach((v) => variants.add(v));
+    }
+  }
+
+  // 常见连字符/空格变体
+  for (const word of words) {
+    if (word.includes("-")) {
+      variants.add(word.replace(/-/g, " "));
+    } else if (word.includes(" ")) {
+      variants.add(word.replace(/ /g, "-"));
+    }
+  }
+
+  // 过滤：只保留有意义的变体（长度>=2，或者完整的原始查询）
+  return Array.from(variants).filter(
+    (v) => v.length >= 2 || v === normalized,
+  );
+}
+
+/**
+ * 使用扩展词列表计算关键词密度
+ * 与 keywordDensity 不同，这里接收预先生成的扩展词列表
+ */
+export function keywordDensityWithExpansion(
+  expandedTerms: string[],
+  text: string,
+): number {
+  if (expandedTerms.length === 0) {
+    return 0;
+  }
+
+  const haystack = text.toLowerCase();
+  let hits = 0;
+
+  for (const term of expandedTerms) {
+    if (haystack.includes(term)) {
+      hits++;
+    }
+  }
+
+  return hits / expandedTerms.length;
+}
+
 export function generateQueryVariants(
   monitor: Pick<MonitorRecord, "query" | "mode">,
 ): string[] {

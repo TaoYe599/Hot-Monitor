@@ -1,7 +1,10 @@
 import type {
   DashboardSnapshot,
+  EngagementDetails,
   EventFilter,
   EventSortConfig,
+  HotspotEngagementAggregates,
+  HotspotEventSummary,
   HotspotFilter,
   HotspotSortConfig,
   HotspotCluster,
@@ -127,7 +130,8 @@ export class Repository {
     sort?: EventSortConfig,
     filter?: EventFilter,
   ): Promise<VerifiedEvent[]> {
-    const conditions = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const conditions: any[] = [];
 
     if (filter?.monitorId !== undefined) {
       conditions.push(eq(eventsTable.monitorId, filter.monitorId));
@@ -185,11 +189,11 @@ export class Repository {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    let orderBy: ReturnType<typeof desc> | ReturnType<typeof sql> = desc(eventsTable.createdAt);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let orderBy: any = desc(eventsTable.createdAt);
 
     if (sort) {
       const { field, order } = sort;
-      const ascOrDesc = order === "asc" ? sql`` : desc(sql``);
 
       switch (field) {
         case "createdAt":
@@ -206,7 +210,6 @@ export class Repository {
             : desc(eventsTable.relevanceScore);
           break;
         case "combinedScore":
-          orderBy = sql`(authenticity_score * relevance_score) ${ascOrDesc}`;
           orderBy = order === "asc"
             ? sql`authenticity_score * relevance_score`
             : desc(sql`authenticity_score * relevance_score`);
@@ -233,8 +236,10 @@ export class Repository {
     limit = 30,
     sort?: HotspotSortConfig,
     filter?: HotspotFilter,
-  ) {
-    const conditions = [];
+    offset = 0,
+  ): Promise<{ hotspots: HotspotCluster[]; total: number }> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const conditions: any[] = [];
 
     if (filter?.monitorId !== undefined) {
       conditions.push(eq(hotspotsTable.monitorId, filter.monitorId));
@@ -280,7 +285,8 @@ export class Repository {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    let orderBy = desc(hotspotsTable.createdAt);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let orderBy: any = desc(hotspotsTable.createdAt);
 
     if (sort) {
       const { field, order } = sort;
@@ -317,14 +323,57 @@ export class Repository {
       }
     }
 
+    // Get total count
+    const countResult = await this.db
+      .select({ count: sql<number>`count(*)` })
+      .from(hotspotsTable)
+      .where(whereClause);
+    const total = Number(countResult[0]?.count ?? 0);
+
     const result = await this.db
       .select()
       .from(hotspotsTable)
       .where(whereClause)
       .orderBy(orderBy)
-      .limit(limit);
+      .limit(limit)
+      .offset(offset);
 
-    return result.map((hotspot) => this.asHotspotCluster(hotspot));
+    return {
+      hotspots: result.map((hotspot) => this.asHotspotCluster(hotspot)),
+      total,
+    };
+  }
+
+  async getEventsByClusterId(clusterId: number): Promise<HotspotEventSummary[]> {
+    const result = await this.db
+      .select({
+        id: eventsTable.id,
+        title: eventsTable.title,
+        sourceUrl: eventsTable.sourceUrl,
+        sourceType: eventsTable.sourceType,
+        sourceLabel: eventsTable.sourceLabel,
+        author: eventsTable.author,
+        publishedAt: eventsTable.publishedAt,
+        authenticityScore: eventsTable.authenticityScore,
+        relevanceScore: eventsTable.relevanceScore,
+        engagementDetails: eventsTable.engagementDetails,
+      })
+      .from(eventsTable)
+      .where(eq(eventsTable.clusterId, clusterId))
+      .orderBy(desc(eventsTable.createdAt));
+
+    return result.map((event) => ({
+      id: event.id,
+      title: event.title,
+      sourceUrl: event.sourceUrl,
+      sourceType: event.sourceType as SourceKind,
+      sourceLabel: event.sourceLabel,
+      author: event.author,
+      publishedAt: event.publishedAt,
+      authenticityScore: event.authenticityScore,
+      relevanceScore: event.relevanceScore,
+      engagementDetails: event.engagementDetails as EngagementDetails | null,
+    }));
   }
 
   async getExistingEvent(monitorId: number, sourceUrl: string): Promise<VerifiedEvent | undefined> {
@@ -345,9 +394,11 @@ export class Repository {
         monitorId: event.monitorId,
         title: event.title,
         summary: event.summary,
+        originalExcerpt: event.originalExcerpt,
         sourceUrl: event.sourceUrl,
         sourceType: event.sourceType,
         sourceLabel: event.sourceLabel,
+        author: event.author,
         publishedAt: event.publishedAt,
         authenticityScore: event.authenticityScore,
         relevanceScore: event.relevanceScore,
@@ -355,6 +406,8 @@ export class Repository {
         clusterId: event.clusterId,
         status: event.status,
         reason: event.reason,
+        engagementDetails: event.engagementDetails,
+        isRead: event.isRead,
         createdAt: nowIso(),
       })
       .returning();
@@ -364,6 +417,31 @@ export class Repository {
   async createHotspot(input: typeof hotspotsTable.$inferInsert): Promise<HotspotCluster> {
     const result = await this.db.insert(hotspotsTable).values(input).returning();
     return this.asHotspotCluster(result[0]);
+  }
+
+  async updateEventsClusterId(eventIds: number[], clusterId: number): Promise<void> {
+    if (eventIds.length === 0) return;
+    await this.db
+      .update(eventsTable)
+      .set({ clusterId })
+      .where(inArray(eventsTable.id, eventIds));
+  }
+
+  async batchMarkEventsRead(eventIds: number[]): Promise<number> {
+    if (eventIds.length === 0) return 0;
+    const result = await this.db
+      .update(eventsTable)
+      .set({ isRead: true })
+      .where(inArray(eventsTable.id, eventIds));
+    return eventIds.length;
+  }
+
+  async batchDeleteEvents(eventIds: number[]): Promise<number> {
+    if (eventIds.length === 0) return 0;
+    const result = await this.db
+      .delete(eventsTable)
+      .where(inArray(eventsTable.id, eventIds));
+    return eventIds.length;
   }
 
   async getSettings(): Promise<SettingsRecord> {
@@ -433,22 +511,30 @@ export class Repository {
   }
 
   async getDashboardSnapshot(): Promise<DashboardSnapshot> {
-    const [monitors, events, hotspots, settings] = await Promise.all([
+    const [monitors, events, hotspotsResult, settings] = await Promise.all([
       this.listMonitors(),
       this.listEvents(12),
       this.listHotspots(8),
       this.getSettings(),
     ]);
 
+    // 为热点添加事件摘要
+    const hotspotsWithEvents = await Promise.all(
+      hotspotsResult.hotspots.map(async (hotspot) => {
+        const events = await this.getEventsByClusterId(hotspot.id);
+        return { ...hotspot, events };
+      }),
+    );
+
     return {
       monitors,
       events,
-      hotspots,
+      hotspots: hotspotsWithEvents,
       settings,
       stats: {
         activeMonitors: monitors.filter((monitor) => monitor.enabled).length,
         acceptedEvents: events.filter((event) => event.status === "accepted").length,
-        hotspots: hotspots.length,
+        hotspots: hotspotsResult.total,
         lastEventAt: events[0]?.createdAt ?? null,
       },
     };
@@ -481,16 +567,45 @@ export class Repository {
 
   private asVerifiedEvent(row: typeof eventsTable.$inferSelect): VerifiedEvent {
     return {
-      ...row,
+      id: row.id,
+      monitorId: row.monitorId,
+      title: row.title,
+      summary: row.summary,
+      originalExcerpt: row.originalExcerpt,
+      sourceUrl: row.sourceUrl,
       sourceType: row.sourceType as SourceKind,
+      sourceLabel: row.sourceLabel,
+      author: row.author,
+      publishedAt: row.publishedAt,
+      authenticityScore: row.authenticityScore,
+      relevanceScore: row.relevanceScore,
+      evidence: row.evidence,
+      clusterId: row.clusterId,
       status: row.status as VerifiedEvent["status"],
+      reason: row.reason,
+      engagementDetails: row.engagementDetails as EngagementDetails | null,
+      isRead: row.isRead,
+      createdAt: row.createdAt,
     };
   }
 
   private asHotspotCluster(row: typeof hotspotsTable.$inferSelect): HotspotCluster {
     return {
-      ...row,
+      id: row.id,
+      monitorId: row.monitorId,
+      label: row.label,
+      summary: row.summary,
+      score: row.score,
+      diversityScore: row.diversityScore,
+      freshnessScore: row.freshnessScore,
+      engagementScore: row.engagementScore,
       status: row.status as HotspotCluster["status"],
+      supportingUrls: row.supportingUrls,
+      reason: row.reason ?? undefined,
+      engagementAggregates: row.engagementAggregates as HotspotEngagementAggregates | null,
+      earliestPublishedAt: row.earliestPublishedAt,
+      latestPublishedAt: row.latestPublishedAt,
+      createdAt: row.createdAt,
     };
   }
 }

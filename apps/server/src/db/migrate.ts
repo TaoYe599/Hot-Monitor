@@ -107,6 +107,49 @@ export async function migrateDatabase(client: Client): Promise<void> {
   } catch (err) {
     console.warn(`[migration] Failed to add reddit to monitors: ${err}`);
   }
+
+  // Migration: Add new columns to events table
+  const eventColumns = [
+    { name: "original_excerpt", sql: "ALTER TABLE events ADD COLUMN original_excerpt TEXT" },
+    { name: "author", sql: "ALTER TABLE events ADD COLUMN author TEXT" },
+    { name: "engagement_details", sql: "ALTER TABLE events ADD COLUMN engagement_details TEXT" },
+    { name: "is_read", sql: "ALTER TABLE events ADD COLUMN is_read INTEGER NOT NULL DEFAULT 0" },
+  ];
+
+  for (const col of eventColumns) {
+    try {
+      // Check if column exists
+      const existing = await client.execute(`PRAGMA table_info(events)`);
+      const hasColumn = existing.rows?.some((row: Record<string, unknown>) => row.name === col.name);
+      if (!hasColumn) {
+        await client.execute(col.sql);
+        console.info(`[migration] Added column ${col.name} to events table`);
+      }
+    } catch (err) {
+      console.warn(`[migration] Failed to add column ${col.name}: ${err}`);
+    }
+  }
+
+  // Migration: Add new columns to hotspots table
+  const hotspotColumns = [
+    { name: "reason", sql: "ALTER TABLE hotspots ADD COLUMN reason TEXT" },
+    { name: "engagement_aggregates", sql: "ALTER TABLE hotspots ADD COLUMN engagement_aggregates TEXT" },
+    { name: "earliest_published_at", sql: "ALTER TABLE hotspots ADD COLUMN earliest_published_at TEXT" },
+    { name: "latest_published_at", sql: "ALTER TABLE hotspots ADD COLUMN latest_published_at TEXT" },
+  ];
+
+  for (const col of hotspotColumns) {
+    try {
+      const existing = await client.execute(`PRAGMA table_info(hotspots)`);
+      const hasColumn = existing.rows?.some((row: Record<string, unknown>) => row.name === col.name);
+      if (!hasColumn) {
+        await client.execute(col.sql);
+        console.info(`[migration] Added column ${col.name} to hotspots table`);
+      }
+    } catch (err) {
+      console.warn(`[migration] Failed to add column ${col.name}: ${err}`);
+    }
+  }
 }
 
 if (process.argv[1] && process.argv[1].endsWith("migrate.ts")) {

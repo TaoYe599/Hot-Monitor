@@ -138,7 +138,22 @@ export const api = {
         }
         if (params?.limit !== undefined)
             queryParams.limit = params.limit;
+        if (params?.offset !== undefined)
+            queryParams.offset = params.offset;
         const queryString = buildQueryString(queryParams);
         return request(`/api/hotspots${queryString}`);
+    },
+    // ============== 批量操作 API ==============
+    batchMarkEventsRead(eventIds) {
+        return request("/api/events/batch-read", {
+            method: "POST",
+            body: JSON.stringify({ eventIds }),
+        });
+    },
+    batchDeleteEvents(eventIds) {
+        return request("/api/events/batch", {
+            method: "DELETE",
+            body: JSON.stringify({ eventIds }),
+        });
     },
 };

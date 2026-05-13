@@ -158,7 +158,7 @@ export function useEventsPrefs(monitors: MonitorRecord[]) {
 
 export function useHotspotsPrefs(monitors: MonitorRecord[]) {
   const defaults: HotspotsPrefs = {
-    sort: { field: "score", order: "desc" },
+    sort: { field: "createdAt", order: "desc" },
     filter: {},
     quickFilter: "",
   };
