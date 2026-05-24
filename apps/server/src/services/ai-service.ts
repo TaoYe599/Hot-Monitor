@@ -97,13 +97,10 @@ export class AiService {
     const body = {
       model: this.config.openRouterModel,
       messages,
+      // DeepSeek V4 Flash 只支持 json_object，不支持 json_schema
+      // 使用 json_object 并在 system prompt 中要求 JSON 输出，由 zod 验证
       response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: schemaName,
-          strict: true,
-          schema: z.toJSONSchema(schema),
-        },
+        type: "json_object",
       },
     };
 
@@ -279,7 +276,42 @@ export class AiService {
           {
             role: "system",
             content:
-              "你验证一条内容是否值得被监控系统捕获。请适度宽松判断，只要内容与监控关键词有一定关联且看起来是真实内容就应该通过。\n\n**宽松原则**：\n- 如果标题或正文包含关键词，或者讨论关键词所在领域/相关话题 -> isMatch=true\n- 如果内容来自可信来源（trustScore >= 0.5）且与关键词相关 -> isMatch=true\n- 只有在内容明显不相关、完全是广告、或明确标注为恶搞/假消息时才拒绝\n\n**matchType 判断**：\n- direct: 标题或正文直接提到关键词\n- semantic: 没有直接提关键词，但讨论同一领域/竞品/相关技术\n- indirect: 关联公司/产品中提及\n\n**authenticity 判断**：\n- 如果内容看起来像正常的新闻/博客/讨论 -> isAuthentic=true\n- 只要内容不是明确标注的假消息 -> isAuthentic=true\n- 可以接受：社交媒体讨论、评测文章、分析报告、技术博客\n\n**summary 生成规则（重要）**：\n- 生成摘要时，**必须保留英文专有名词的原始拼写**，不要翻译成中文\n- 例如：关键词 \"Harness\" → 摘要中仍写 \"Harness\"，不要写成 \"马具\"\n- 例如：关键词 \"Cursor\" → 摘要中仍写 \"Cursor\"，不要写成 \"光标\"\n- 常见要保留的词汇：框架名、工具名、品牌名、公司名、项目名等专有名词\n- 如果原标题是英文，可以直接使用原标题作为摘要主体\n- 可以用中文解释内容，但专有名词必须保留英文原形",
+              `你验证一条内容是否值得被监控系统捕获。请适度宽松判断，只要内容与监控关键词有一定关联且看起来是真实内容就应该通过。
+
+**重要：必须严格遵循以下 JSON 输出格式，不要添加或省略任何字段：**
+\`\`\`json
+{
+  "isMatch": true,
+  "authenticityScore": 0.85,
+  "relevanceScore": 0.9,
+  "matchType": "direct",
+  "reason": "判断理由",
+  "summary": "摘要内容",
+  "evidence": [
+    {"quote": "引用的原文", "reason": "引用理由"}
+  ]
+}
+\`\`\`
+
+**字段说明：**
+- isMatch: boolean - 是否匹配监控关键词
+- authenticityScore: number - 真实性评分 0.0-1.0
+- relevanceScore: number - 相关性评分 0.0-1.0
+- matchType: "direct" | "semantic" | "indirect" - 匹配类型
+- reason: string - 简短判断理由
+- summary: string - 180字以内的摘要
+- evidence: array - 最多3个证据，每个包含 quote 和 reason
+
+**宽松原则**：
+- 如果标题或正文包含关键词，或者讨论关键词所在领域/相关话题 -> isMatch=true
+- 如果内容来自可信来源（trustScore >= 0.5）且与关键词相关 -> isMatch=true
+- 只有在内容明显不相关、完全是广告、或明确标注为恶搞/假消息时才拒绝
+
+**summary 生成规则（重要）**：
+- 生成摘要时，**必须保留英文专有名词的原始拼写**，不要翻译成中文
+- 例如：关键词 "Harness" → 摘要中仍写 "Harness"，不要写成 "马具"
+- 例如：关键词 "Cursor" → 摘要中仍写 "Cursor"，不要写成 "光标"
+- 常见要保留的词汇：框架名、工具名、品牌名、公司名、项目名等专有名词`,
           },
           {
             role: "user",
@@ -454,23 +486,47 @@ export class AiService {
           {
             role: "system",
             content:
-              `你是一个AI热点信号梳理专家。请将候选内容整理为4到8个高价值热点，每个热点需要给出简短的label（中文标题，不带编号或前缀）和Summary（中文描述）。
+              `你是一个AI热点信号梳理专家。请将候选内容整理为4到8个高价值热点。
+
+**重要：必须严格遵循以下 JSON 输出格式，不要添加或省略任何字段：**
+\`\`\`json
+{
+  "clusters": [
+    {
+      "label": "热点标题（中文，不带编号）",
+      "summary": "热点描述（180字以内）",
+      "score": 0.75,
+      "diversityScore": 0.6,
+      "freshnessScore": 0.8,
+      "engagementScore": 0.7,
+      "shouldNotify": true,
+      "reason": "判断理由",
+      "supportingUrls": ["url1", "url2"]
+    }
+  ]
+}
+\`\`\`
+
+**字段说明：**
+- clusters: array - 热点数组，至少1个热点
+- label: string - 中文标题，不带编号或前缀
+- summary: string - 180字以内的描述
+- score: number - 综合热度 0.0-1.0
+- diversityScore: number - 来源多样性 0.0-1.0
+- freshnessScore: number - 新鲜度 0.0-1.0
+- engagementScore: number - 互动热度 0.0-1.0
+- shouldNotify: boolean - 是否通知
+- reason: string - 判断理由
+- supportingUrls: array - 支持的 URL 列表
 
 **评分标准（必须严格执行）：**
-- score: 综合热度评分，0.0-1.0。计算方式：(信任分×0.4 + 互动分×0.3 + 新鲜分×0.3)
+- score: 综合热度评分。计算方式：(信任分×0.4 + 互动分×0.3 + 新鲜分×0.3)
   - 信任分(trustScore): 来自官方源(>0.9)给高分，社交媒体(<0.7)给低分
   - 互动分(engagementScore): 点赞/评论/转发多的给高分
   - 新鲜分(freshnessScore): 3小时内=1.0，24小时内=0.64，72小时内=0.48，更久=0.24
-- **重要**: 大多数候选内容的score应该在0.5-0.7之间。只有真正的热点才能达到0.8以上。如果候选内容普遍质量一般，不要强行给高分。
+- **重要**: 大多数候选内容的score应该在0.5-0.7之间。只有真正的热点才能达到0.8以上。
 - diversityScore: 来源多样性。跨多个不同平台/领域=高，重复内容=低
-- freshnessScore: 内容新鲜度（见上方计算）
-- engagementScore: 互动热度（见上方计算）
-- shouldNotify: 仅当score>=0.7且来源可信时才为true
-
-**示例评分**：
-- 官方发布的重要更新 + 多平台报道 → score 0.75-0.95
-- 单个来源的普通更新 → score 0.5-0.65
-- 重复或低质量内容 → score 0.3-0.5`,
+- shouldNotify: 仅当score>=0.7且来源可信时才为true`,
           },
           {
             role: "user",

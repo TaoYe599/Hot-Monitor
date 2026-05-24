@@ -58,7 +58,6 @@ export interface SourceItem {
   tags: string[];
   raw: Record<string, unknown>;
   engagementDetails?: EngagementDetails | null;
-  existingEvent?: { id: number };
 }
 
 export interface VerificationEvidence {
@@ -168,46 +167,11 @@ export interface SettingsRecord {
   updatedAt: string;
 }
 
-export interface SubscriptionRuleRecord {
-  id: number;
-  name: string;
-  enabled: boolean;
-  monitorIds: number[] | null;
-  includeKeywords: string[];
-  andKeywords: string[];
-  excludeKeywords: string[];
-  minScore: number;
-  minTrustScore: number;
-  minSupportingSources: number;
-  deliveryFrequency: "instant" | "daily" | "weekly";
-  deliveryTime: string | null;
-  recipients: string[];
-  lastDispatchedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface SubscriptionRuleInput {
-  name: string;
-  enabled: boolean;
-  monitorIds: number[] | null;
-  includeKeywords: string[];
-  andKeywords: string[];
-  excludeKeywords: string[];
-  minScore: number;
-  minTrustScore: number;
-  minSupportingSources: number;
-  deliveryFrequency: "instant" | "daily" | "weekly";
-  deliveryTime: string | null;
-  recipients: string[];
-}
-
 export interface DashboardSnapshot {
   monitors: MonitorRecord[];
   events: VerifiedEvent[];
   hotspots: HotspotCluster[];
   settings: SettingsRecord | null;
-  subscriptionRules: SubscriptionRuleRecord[];
   stats: {
     activeMonitors: number;
     acceptedEvents: number;
@@ -215,7 +179,6 @@ export interface DashboardSnapshot {
     lastEventAt: string | null;
   };
 }
-
 
 export interface VerifyKeywordInput {
   monitor: Pick<MonitorRecord, "name" | "query" | "mode">;
