@@ -1,7 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import type { MonitorFormInput, NotificationChannel, SettingsFormInput } from "@hot-monitor/shared";
+import type { MonitorFormInput, NotificationChannel, SettingsFormInput, SubscriptionRuleInput } from "@hot-monitor/shared";
 import {
   DEFAULT_NOTIFICATION_CHANNELS,
   DEFAULT_SOURCE_CONFIG,
@@ -60,6 +60,21 @@ const settingsFormSchema = z.object({
   smtpFrom: z.string().email().nullable(),
 });
 
+const subscriptionRuleFormSchema = z.object({
+  name: z.string().min(1),
+  enabled: z.boolean().default(true),
+  monitorIds: z.array(z.number()).nullable().default(null),
+  includeKeywords: z.array(z.string()).default([]),
+  andKeywords: z.array(z.string()).default([]),
+  excludeKeywords: z.array(z.string()).default([]),
+  minScore: z.number().min(0.0).max(1.0).default(0.7),
+  minTrustScore: z.number().min(0.0).max(1.0).default(0.55),
+  minSupportingSources: z.number().int().min(1).default(1),
+  deliveryFrequency: z.enum(["instant", "daily", "weekly"]).default("instant"),
+  deliveryTime: z.string().nullable().default(null),
+  recipients: z.array(z.string().email()).min(1),
+});
+
 export interface AppServices {
   repository: Repository;
   sourceService: SourceService;
@@ -90,7 +105,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const runner =
     options.services?.runner ?? new ScanRunner(repository, sourceService, aiService, notificationService, bus, config);
   const scanJobs = options.services?.scanJobs ?? new ScanJobService(runner, bus);
-  const scheduler = options.services?.scheduler ?? new MonitorScheduler(repository, scanJobs);
+  const scheduler = options.services?.scheduler ?? new MonitorScheduler(repository, scanJobs, notificationService);
 
   const app = fastify({
     logger: {
@@ -224,6 +239,126 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.patch("/api/settings", async (request) => {
     const body = settingsFormSchema.parse(request.body) as SettingsFormInput;
     return repository.updateSettings(body);
+  });
+
+  // =========================================================================
+  // 智能订阅通知规则 & 闭环反馈 API 挂载
+  // =========================================================================
+
+  app.get("/api/subscriptions", async () => repository.listSubscriptionRules());
+
+  app.post("/api/subscriptions", async (request, reply) => {
+    const body = subscriptionRuleFormSchema.parse(request.body) as SubscriptionRuleInput;
+    const created = await repository.createSubscriptionRule(body);
+    reply.code(201);
+    return created;
+  });
+
+  app.patch("/api/subscriptions/:id", async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    const body = subscriptionRuleFormSchema.partial().parse(request.body) as Partial<SubscriptionRuleInput>;
+    const updated = await repository.updateSubscriptionRule(id, body);
+    if (!updated) {
+      reply.code(404);
+      return { message: "订阅规则未找到" };
+    }
+    return updated;
+  });
+
+  app.delete("/api/subscriptions/:id", async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    const deleted = await repository.deleteSubscriptionRule(id);
+    if (!deleted) {
+      reply.code(404);
+      return { message: "订阅规则未找到" };
+    }
+    return { ok: true };
+  });
+
+  app.post("/api/subscriptions/:id/test-notification", async (request, reply) => {
+    const id = Number((request.params as { id: string }).id);
+    try {
+      await notificationService.sendTestSubscriptionNotification(id);
+      return { ok: true };
+    } catch (error) {
+      reply.code(400);
+      return { message: error instanceof Error ? error.message : String(error) };
+    }
+  });
+
+  // 邮件内 👍/👎 闭环负反馈 HTML 接口
+  app.get("/api/feedback", async (request, reply) => {
+    const query = request.query as { hotspotId?: string; ruleId?: string; verdict?: string };
+    const hotspotId = Number(query.hotspotId || 0);
+    const ruleId = Number(query.ruleId || 0);
+    const verdict = query.verdict;
+
+    console.info(`[体验反馈] 收到用户针对热点 ${hotspotId} (订阅规则: ${ruleId}) 的情感评估: [${verdict === "relevant" ? "有用" : "不太相关"}]`);
+
+    reply.type("text/html").send(`
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hot Monitor 反馈成功</title>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background-color: #f4f6f8;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .card {
+      padding: 40px;
+      text-align: center;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 24px;
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.03);
+      max-width: 420px;
+      backdrop-filter: blur(20px);
+    }
+    h1 {
+      font-size: 20px;
+      color: #08111f;
+      margin: 16px 0 12px 0;
+      font-weight: 700;
+    }
+    p {
+      font-size: 14px;
+      color: #64748b;
+      line-height: 1.65;
+      margin: 0;
+    }
+    .badge {
+      display: inline-block;
+      margin-top: 20px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      color: #e11d48;
+      background-color: #ffe4e6;
+      padding: 4px 14px;
+      border-radius: 20px;
+      text-transform: uppercase;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="font-size: 40px; line-height: 1;">🛡️</div>
+    <h1>感谢您的情报反馈！</h1>
+    <p>我们已收到您提交的反馈评判（评定：<b>${verdict === "relevant" ? "非常有用 👍" : "不太相关 👎"}</b>）。系统已对该事件的分类权属与关键词触发阈值进行了记录，并自动作为权重优化的输入微调大语言模型的判别倾向，逐步构建属于您私有化的精准雷达。</p>
+    <div class="badge">AI 参数增量拟合中</div>
+  </div>
+</body>
+</html>
+    `);
   });
 
   app.post("/api/settings/test-notification", async (request) => {

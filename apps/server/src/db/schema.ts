@@ -114,3 +114,39 @@ export const notificationLogsTable = sqliteTable("notification_logs", {
   error: text("error"),
   createdAt: text("created_at").notNull(),
 });
+
+export const subscriptionRulesTable = sqliteTable("subscription_rules", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  monitorIds: text("monitor_ids", { mode: "json" }).$type<number[] | null>(),
+  includeKeywords: text("include_keywords", { mode: "json" }).$type<string[]>().notNull(),
+  andKeywords: text("and_keywords", { mode: "json" }).$type<string[]>().notNull(),
+  excludeKeywords: text("exclude_keywords", { mode: "json" }).$type<string[]>().notNull(),
+  minScore: real("min_score").notNull().default(0.7),
+  minTrustScore: real("min_trust_score").notNull().default(0.55),
+  minSupportingSources: integer("min_supporting_sources").notNull().default(1),
+  deliveryFrequency: text("delivery_frequency").notNull().default("instant"), // "instant" | "daily" | "weekly"
+  deliveryTime: text("delivery_time"), // 例如 "09:00"
+  recipients: text("recipients", { mode: "json" }).$type<string[]>().notNull(),
+  lastDispatchedAt: text("last_dispatched_at"),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
+});
+
+export const subscriptionCooldownsTable = sqliteTable("subscription_cooldowns", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ruleId: integer("rule_id").notNull(),
+  hotspotId: integer("hotspot_id").notNull(),
+  lastNotifiedAt: text("last_notified_at").notNull(),
+  score: real("score").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+
+export const subscriptionSilentQueueTable = sqliteTable("subscription_silent_queue", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  ruleId: integer("rule_id").notNull(),
+  hotspotId: integer("hotspot_id").notNull(),
+  createdAt: text("created_at").notNull(),
+});
+

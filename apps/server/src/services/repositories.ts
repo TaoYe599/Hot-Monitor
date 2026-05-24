@@ -16,6 +16,8 @@ import type {
   SettingsRecord,
   SourceKind,
   VerifiedEvent,
+  SubscriptionRuleRecord,
+  SubscriptionRuleInput,
 } from "@hot-monitor/shared";
 import {
   DEFAULT_SOURCE_CONFIG,
@@ -30,6 +32,9 @@ import {
   monitorsTable,
   notificationLogsTable,
   settingsTable,
+  subscriptionRulesTable,
+  subscriptionCooldownsTable,
+  subscriptionSilentQueueTable,
 } from "../db/schema.js";
 
 type DbClient = ReturnType<
@@ -511,11 +516,12 @@ export class Repository {
   }
 
   async getDashboardSnapshot(): Promise<DashboardSnapshot> {
-    const [monitors, events, hotspotsResult, settings] = await Promise.all([
+    const [monitors, events, hotspotsResult, settings, subscriptionRules] = await Promise.all([
       this.listMonitors(),
       this.listEvents(12),
       this.listHotspots(8),
       this.getSettings(),
+      this.listSubscriptionRules(),
     ]);
 
     // 为热点添加事件摘要
@@ -531,6 +537,7 @@ export class Repository {
       events,
       hotspots: hotspotsWithEvents,
       settings,
+      subscriptionRules,
       stats: {
         activeMonitors: monitors.filter((monitor) => monitor.enabled).length,
         acceptedEvents: events.filter((event) => event.status === "accepted").length,
@@ -606,6 +613,194 @@ export class Repository {
       earliestPublishedAt: row.earliestPublishedAt,
       latestPublishedAt: row.latestPublishedAt,
       createdAt: row.createdAt,
+    };
+  }
+
+  async listSubscriptionRules(): Promise<SubscriptionRuleRecord[]> {
+    const result = await this.db
+      .select()
+      .from(subscriptionRulesTable)
+      .orderBy(desc(subscriptionRulesTable.createdAt));
+    return result.map((row) => this.asSubscriptionRuleRecord(row));
+  }
+
+  async getSubscriptionRule(id: number): Promise<SubscriptionRuleRecord | undefined> {
+    const result = await this.db
+      .select()
+      .from(subscriptionRulesTable)
+      .where(eq(subscriptionRulesTable.id, id))
+      .limit(1);
+    return result[0] ? this.asSubscriptionRuleRecord(result[0]) : undefined;
+  }
+
+  async createSubscriptionRule(input: SubscriptionRuleInput): Promise<SubscriptionRuleRecord> {
+    const createdAt = nowIso();
+    const result = await this.db
+      .insert(subscriptionRulesTable)
+      .values({
+        name: input.name,
+        enabled: input.enabled,
+        monitorIds: input.monitorIds,
+        includeKeywords: input.includeKeywords,
+        andKeywords: input.andKeywords,
+        excludeKeywords: input.excludeKeywords,
+        minScore: input.minScore,
+        minTrustScore: input.minTrustScore,
+        minSupportingSources: input.minSupportingSources,
+        deliveryFrequency: input.deliveryFrequency,
+        deliveryTime: input.deliveryTime,
+        recipients: input.recipients,
+        lastDispatchedAt: null,
+        createdAt,
+        updatedAt: createdAt,
+      })
+      .returning();
+    return this.asSubscriptionRuleRecord(result[0]);
+  }
+
+  async updateSubscriptionRule(
+    id: number,
+    patch: Partial<SubscriptionRuleInput> & { lastDispatchedAt?: string | null },
+  ): Promise<SubscriptionRuleRecord | undefined> {
+    const payload: Partial<typeof subscriptionRulesTable.$inferInsert> = {
+      updatedAt: nowIso(),
+    };
+
+    if (patch.name !== undefined) payload.name = patch.name;
+    if (patch.enabled !== undefined) payload.enabled = patch.enabled;
+    if (patch.monitorIds !== undefined) payload.monitorIds = patch.monitorIds;
+    if (patch.includeKeywords !== undefined) payload.includeKeywords = patch.includeKeywords;
+    if (patch.andKeywords !== undefined) payload.andKeywords = patch.andKeywords;
+    if (patch.excludeKeywords !== undefined) payload.excludeKeywords = patch.excludeKeywords;
+    if (patch.minScore !== undefined) payload.minScore = patch.minScore;
+    if (patch.minTrustScore !== undefined) payload.minTrustScore = patch.minTrustScore;
+    if (patch.minSupportingSources !== undefined) payload.minSupportingSources = patch.minSupportingSources;
+    if (patch.deliveryFrequency !== undefined) payload.deliveryFrequency = patch.deliveryFrequency;
+    if (patch.deliveryTime !== undefined) payload.deliveryTime = patch.deliveryTime;
+    if (patch.recipients !== undefined) payload.recipients = patch.recipients;
+    if (patch.lastDispatchedAt !== undefined) payload.lastDispatchedAt = patch.lastDispatchedAt;
+
+    const result = await this.db
+      .update(subscriptionRulesTable)
+      .set(payload)
+      .where(eq(subscriptionRulesTable.id, id))
+      .returning();
+    return result[0] ? this.asSubscriptionRuleRecord(result[0]) : undefined;
+  }
+
+  async deleteSubscriptionRule(id: number): Promise<boolean> {
+    const existing = await this.getSubscriptionRule(id);
+    if (!existing) return false;
+    await this.db.delete(subscriptionRulesTable).where(eq(subscriptionRulesTable.id, id));
+    await this.db.delete(subscriptionCooldownsTable).where(eq(subscriptionCooldownsTable.ruleId, id));
+    await this.db.delete(subscriptionSilentQueueTable).where(eq(subscriptionSilentQueueTable.ruleId, id));
+    return true;
+  }
+
+  // Cooldown 操作
+  async getSubscriptionCooldown(ruleId: number, hotspotId: number) {
+    const result = await this.db
+      .select()
+      .from(subscriptionCooldownsTable)
+      .where(
+        and(
+          eq(subscriptionCooldownsTable.ruleId, ruleId),
+          eq(subscriptionCooldownsTable.hotspotId, hotspotId),
+        ),
+      )
+      .limit(1);
+    return result[0];
+  }
+
+  async setSubscriptionCooldown(ruleId: number, hotspotId: number, score: number) {
+    const createdAt = nowIso();
+    await this.db.insert(subscriptionCooldownsTable).values({
+      ruleId,
+      hotspotId,
+      lastNotifiedAt: createdAt,
+      score,
+      createdAt,
+    });
+  }
+
+  async updateSubscriptionCooldown(ruleId: number, hotspotId: number, score: number) {
+    const updatedAt = nowIso();
+    await this.db
+      .update(subscriptionCooldownsTable)
+      .set({
+        lastNotifiedAt: updatedAt,
+        score,
+      })
+      .where(
+        and(
+          eq(subscriptionCooldownsTable.ruleId, ruleId),
+          eq(subscriptionCooldownsTable.hotspotId, hotspotId),
+        ),
+      );
+  }
+
+  // Silent Queue 操作
+  async listSilentQueue(): Promise<(typeof subscriptionSilentQueueTable.$inferSelect)[]> {
+    return this.db.select().from(subscriptionSilentQueueTable);
+  }
+
+  async enqueueSilent(ruleId: number, hotspotId: number): Promise<void> {
+    const existing = await this.db
+      .select()
+      .from(subscriptionSilentQueueTable)
+      .where(
+        and(
+          eq(subscriptionSilentQueueTable.ruleId, ruleId),
+          eq(subscriptionSilentQueueTable.hotspotId, hotspotId),
+        ),
+      )
+      .limit(1);
+    if (existing.length > 0) return;
+
+    await this.db.insert(subscriptionSilentQueueTable).values({
+      ruleId,
+      hotspotId,
+      createdAt: nowIso(),
+    });
+  }
+
+  async clearSilentQueue(ruleId?: number): Promise<void> {
+    if (ruleId !== undefined) {
+      await this.db.delete(subscriptionSilentQueueTable).where(eq(subscriptionSilentQueueTable.ruleId, ruleId));
+    } else {
+      await this.db.delete(subscriptionSilentQueueTable);
+    }
+  }
+
+  async getHotspot(id: number): Promise<HotspotCluster | undefined> {
+    const result = await this.db
+      .select()
+      .from(hotspotsTable)
+      .where(eq(hotspotsTable.id, id))
+      .limit(1);
+    return result[0] ? this.asHotspotCluster(result[0]) : undefined;
+  }
+
+  private asSubscriptionRuleRecord(
+    row: typeof subscriptionRulesTable.$inferSelect,
+  ): SubscriptionRuleRecord {
+    return {
+      id: row.id,
+      name: row.name,
+      enabled: row.enabled,
+      monitorIds: row.monitorIds,
+      includeKeywords: row.includeKeywords,
+      andKeywords: row.andKeywords,
+      excludeKeywords: row.excludeKeywords,
+      minScore: row.minScore,
+      minTrustScore: row.minTrustScore,
+      minSupportingSources: row.minSupportingSources,
+      deliveryFrequency: row.deliveryFrequency as SubscriptionRuleRecord["deliveryFrequency"],
+      deliveryTime: row.deliveryTime,
+      recipients: row.recipients,
+      lastDispatchedAt: row.lastDispatchedAt,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
     };
   }
 }

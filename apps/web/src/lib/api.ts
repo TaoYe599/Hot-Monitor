@@ -9,6 +9,8 @@ import type {
   ScanJobRecord,
   SettingsFormInput,
   SettingsRecord,
+  SubscriptionRuleRecord,
+  SubscriptionRuleInput,
 } from "@hot-monitor/shared";
 
 export function splitLines(value: string): string[] {
@@ -179,6 +181,33 @@ export const api = {
     return request<{ ok: boolean; count: number }>("/api/events/batch", {
       method: "DELETE",
       body: JSON.stringify({ eventIds }),
+    });
+  },
+
+  listSubscriptionRules(): Promise<SubscriptionRuleRecord[]> {
+    return request<SubscriptionRuleRecord[]>("/api/subscriptions");
+  },
+  createSubscriptionRule(body: SubscriptionRuleInput): Promise<SubscriptionRuleRecord> {
+    return request<SubscriptionRuleRecord>("/api/subscriptions", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+  },
+  updateSubscriptionRule(id: number, body: Partial<SubscriptionRuleInput>): Promise<SubscriptionRuleRecord> {
+    return request<SubscriptionRuleRecord>(`/api/subscriptions/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    });
+  },
+  deleteSubscriptionRule(id: number): Promise<{ ok: boolean }> {
+    return request<{ ok: boolean }>(`/api/subscriptions/${id}`, {
+      method: "DELETE",
+    });
+  },
+  testSubscriptionRuleNotification(id: number): Promise<{ ok: boolean }> {
+    return request<{ ok: boolean }>(`/api/subscriptions/${id}/test-notification`, {
+      method: "POST",
+      body: JSON.stringify({}),
     });
   },
 };

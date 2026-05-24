@@ -82,6 +82,38 @@ const statements = [
       error TEXT,
       created_at TEXT NOT NULL
     )`,
+  `CREATE TABLE IF NOT EXISTS subscription_rules (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      monitor_ids TEXT,
+      include_keywords TEXT NOT NULL,
+      and_keywords TEXT NOT NULL,
+      exclude_keywords TEXT NOT NULL,
+      min_score REAL NOT NULL DEFAULT 0.7,
+      min_trust_score REAL NOT NULL DEFAULT 0.55,
+      min_supporting_sources INTEGER NOT NULL DEFAULT 1,
+      delivery_frequency TEXT NOT NULL DEFAULT 'instant',
+      delivery_time TEXT,
+      recipients TEXT NOT NULL,
+      last_dispatched_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`,
+  `CREATE TABLE IF NOT EXISTS subscription_cooldowns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id INTEGER NOT NULL,
+      hotspot_id INTEGER NOT NULL,
+      last_notified_at TEXT NOT NULL,
+      score REAL NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+  `CREATE TABLE IF NOT EXISTS subscription_silent_queue (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id INTEGER NOT NULL,
+      hotspot_id INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    )`
 ];
 
 export async function migrateDatabase(client: Client): Promise<void> {
