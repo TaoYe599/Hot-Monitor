@@ -3,10 +3,6 @@ import React, { useState } from "react";
 
 interface HotspotCardProps {
   hotspot: HotspotCluster & { events?: HotspotEventSummary[] };
-  selected?: boolean;
-  onSelect?: (id: number, selected: boolean) => void;
-  expandedReasons?: Set<number>;
-  onToggleReason?: (id: number) => void;
 }
 
 // 来源映射
@@ -24,6 +20,21 @@ const SOURCE_LABELS: Record<SourceKind, string> = {
   manual: "手动",
 };
 
+// 来源图标（低饱和度单色 Unicode/svg）
+const SOURCE_ICONS: Record<SourceKind, string> = {
+  twitter: "𝕏",
+  github: "🐙",
+  hackernews: "HN",
+  zhihu: "知",
+  weibo: "微",
+  reddit: "R",
+  baidu: "百",
+  google: "G",
+  rss: "📰",
+  search: "🔍",
+  manual: "✎",
+};
+
 // 从 URL 解析来源类型
 function parseSourceFromUrl(url: string): SourceKind {
   try {
@@ -39,22 +50,6 @@ function parseSourceFromUrl(url: string): SourceKind {
     return "search";
   } catch {
     return "search";
-  }
-}
-
-// 获取来源显示名称
-function getSourceDisplay(url: string): string {
-  const kind = parseSourceFromUrl(url);
-  return SOURCE_LABELS[kind] || kind;
-}
-
-// 获取来源唯一标识（用于显示多个来源）
-function getSourceKey(url: string): string {
-  try {
-    const hostname = new URL(url).hostname.replace(/^www\./, "");
-    return hostname;
-  } catch {
-    return url.slice(0, 20);
   }
 }
 
@@ -78,161 +73,19 @@ function formatRelativeTime(isoString: string): string {
   return `${year}-${month}-${day}`;
 }
 
-// 获取时间颜色类名
-function getTimeColorClass(isoString: string): string {
-  const date = new Date(isoString);
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffHours = diffMs / (1000 * 60 * 60);
-
-  if (diffHours < 1) return "text-red-500 font-semibold";
-  if (diffHours < 6) return "text-orange-500 font-medium";
-  if (diffHours < 24) return "text-yellow-600";
-  return "text-[var(--ink-soft)]";
-}
-
 // 格式化百分比
 function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-// 获取评分颜色
-function getScoreColorClass(score: number): string {
-  if (score >= 0.8) return "bg-[var(--ember-soft)] text-[var(--ember)]";
-  if (score >= 0.6) return "bg-yellow-100 text-yellow-700";
-  if (score >= 0.4) return "bg-orange-100 text-orange-700";
-  return "bg-[rgba(8,17,31,0.06)] text-[var(--ink-soft)]";
+// 格式化数字
+function formatNumber(num: number): string {
+  if (num >= 1_000_000) return `${(num / 1_000_000).toFixed(1)}M`;
+  if (num >= 1_000) return `${(num / 1_000).toFixed(1)}K`;
+  return String(num);
 }
 
-// 渲染事件互动数据（用于摘要列表）
-function renderEngagementDetailsForSummary(
-  details: HotspotEventSummary["engagementDetails"],
-  sourceType: SourceKind,
-): React.ReactNode {
-  if (!details) return null;
-
-  const items: React.ReactNode[] = [];
-
-  switch (sourceType) {
-    case "twitter":
-      if (details.likes) items.push(<span key="likes">赞 {formatNumber(details.likes)}</span>);
-      if (details.retweets) items.push(<span key="retweets">转 {formatNumber(details.retweets)}</span>);
-      if (details.views) items.push(<span key="views" className="text-[var(--ink-soft)]">浏览 {formatNumber(details.views)}</span>);
-      break;
-    case "hackernews":
-      if (details.points) items.push(<span key="points">票 {formatNumber(details.points)}</span>);
-      if (details.comments) items.push(<span key="comments">评 {formatNumber(details.comments)}</span>);
-      break;
-    case "zhihu":
-      if (details.likes) items.push(<span key="likes">赞 {formatNumber(details.likes)}</span>);
-      if (details.comments) items.push(<span key="comments">评 {formatNumber(details.comments)}</span>);
-      break;
-    case "reddit":
-      if (details.score !== undefined) items.push(<span key="score">赞 {formatNumber(details.score)}</span>);
-      if (details.comments) items.push(<span key="comments">评 {formatNumber(details.comments)}</span>);
-      break;
-  }
-
-  if (items.length === 0) return null;
-
-  return (
-    <div className="flex flex-wrap gap-2 text-xs text-[var(--ink-soft)]">
-      {items.map((item, i) => (
-        <span key={i} className="flex items-center gap-0.5">{item}</span>
-      ))}
-    </div>
-  );
-}
-
-// 单个事件摘要行
-function EventSummaryItem({ event }: { event: HotspotEventSummary }) {
-  return (
-    <div className="flex flex-col gap-1 rounded-lg bg-[rgba(8,17,31,0.02)] p-3">
-      {/* 头部：来源、作者、时间、评分 */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="rounded-full bg-[var(--ember-soft)] px-1.5 py-0.5 text-[10px] font-semibold text-[var(--ember)]">
-          {SOURCE_LABELS[event.sourceType] || event.sourceLabel}
-        </span>
-        {event.author && (
-          <span className="text-[var(--ink-soft)]">@{event.author}</span>
-        )}
-        {event.publishedAt && (
-          <span className={getTimeColorClass(event.publishedAt)} title={`发布时间: ${event.publishedAt}`}>
-            {formatRelativeTime(event.publishedAt)}
-          </span>
-        )}
-        <div className="ml-auto flex items-center gap-1.5">
-          <span className="rounded-full bg-[var(--signal-soft)] px-1.5 py-0.5 text-[10px] text-[var(--signal)]">
-            真实 {Math.round(event.authenticityScore * 100)}%
-          </span>
-          <span className="rounded-full bg-[var(--ember-soft)] px-1.5 py-0.5 text-[10px] text-[var(--ember)]">
-            相关 {Math.round(event.relevanceScore * 100)}%
-          </span>
-        </div>
-      </div>
-      {/* 标题 */}
-      <div className="flex items-center gap-1.5">
-        <a
-          href={event.sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex-1 text-sm font-medium hover:text-[var(--ember)] transition-colors truncate"
-          title={event.title}
-        >
-          {event.title}
-        </a>
-        <a
-          href={event.sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="flex-shrink-0 rounded-full bg-[rgba(8,17,31,0.06)] p-1 text-[var(--ink-soft)] hover:bg-[var(--ember-soft)] hover:text-[var(--ember)] transition-colors"
-          title="快速跳转"
-        >
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-          </svg>
-        </a>
-      </div>
-      {/* 互动数据 */}
-      {event.engagementDetails && (
-        renderEngagementDetailsForSummary(event.engagementDetails, event.sourceType)
-      )}
-    </div>
-  );
-}
-
-// 事件摘要列表
-function EventSummaryList({ events }: { events: HotspotEventSummary[] }) {
-  const [showAll, setShowAll] = useState(false);
-  const displayEvents = showAll ? events : events.slice(0, 3);
-  const hasMore = events.length > 3;
-
-  return (
-    <div>
-      <div className="flex items-center justify-between mb-2">
-        <span className="text-xs font-semibold text-[var(--ink-soft)]">
-          关联事件 ({events.length})
-        </span>
-        {hasMore && (
-          <button
-            type="button"
-            onClick={() => setShowAll(!showAll)}
-            className="text-xs text-[var(--ember)] hover:underline"
-          >
-            {showAll ? "收起" : `查看全部 ${events.length} 个`}
-          </button>
-        )}
-      </div>
-      <div className="flex flex-col gap-2">
-        {displayEvents.map((event) => (
-          <EventSummaryItem key={event.id} event={event} />
-        ))}
-      </div>
-    </div>
-  );
-}
-
-// 获取来源来源类型标签（去重）
+// 获取来源类型统计
 function getSourceTypes(urls: string[]): { kind: SourceKind; label: string; count: number }[] {
   const typeMap = new Map<SourceKind, number>();
   for (const url of urls) {
@@ -246,17 +99,6 @@ function getSourceTypes(urls: string[]): { kind: SourceKind; label: string; coun
   }));
 }
 
-// 格式化数字（超过1000显示为K）
-function formatNumber(num: number): string {
-  if (num >= 1_000_000) {
-    return `${(num / 1_000_000).toFixed(1)}M`;
-  }
-  if (num >= 1_000) {
-    return `${(num / 1_000).toFixed(1)}K`;
-  }
-  return String(num);
-}
-
 // 渲染互动数据聚合
 function renderEngagementAggregates(
   aggregates: HotspotEngagementAggregates | null | undefined,
@@ -265,293 +107,325 @@ function renderEngagementAggregates(
   if (!aggregates) return null;
 
   const items: React.ReactNode[] = [];
-
-  // 根据来源类型决定显示哪些指标
   const hasTwitter = sourceTypes.some((s) => s.kind === "twitter");
   const hasHackerNews = sourceTypes.some((s) => s.kind === "hackernews");
-  const hasReddit = sourceTypes.some((s) => s.kind === "reddit");
-  const hasZhihu = sourceTypes.some((s) => s.kind === "zhihu");
 
   if (hasTwitter) {
-    if (aggregates.totalLikes) {
-      items.push(
-        <span key="likes" className="flex items-center gap-1">
-          <span className="text-[var(--ink-soft)]">赞</span>
-          <span className="font-semibold">{formatNumber(aggregates.totalLikes)}</span>
-        </span>,
-      );
-    }
-    if (aggregates.totalRetweets) {
-      items.push(
-        <span key="retweets" className="flex items-center gap-1">
-          <span className="text-[var(--ink-soft)]">转</span>
-          <span className="font-semibold">{formatNumber(aggregates.totalRetweets)}</span>
-        </span>,
-      );
-    }
-    if (aggregates.totalViews) {
-      items.push(
-        <span key="views" className="flex items-center gap-1">
-          <span className="text-[var(--ink-soft)]">浏览</span>
-          <span>{formatNumber(aggregates.totalViews)}</span>
-        </span>,
-      );
-    }
+    if (aggregates.totalLikes) items.push(`${formatNumber(aggregates.totalLikes)} 赞`);
+    if (aggregates.totalRetweets) items.push(`${formatNumber(aggregates.totalRetweets)} 转发`);
+    if (aggregates.totalViews) items.push(`${formatNumber(aggregates.totalViews)} 浏览`);
   }
-
   if (hasHackerNews) {
-    if (aggregates.totalPoints) {
-      items.push(
-        <span key="points" className="flex items-center gap-1">
-          <span className="text-[var(--ink-soft)]">票</span>
-          <span className="font-semibold">{formatNumber(aggregates.totalPoints)}</span>
-        </span>,
-      );
-    }
-    if (aggregates.totalComments) {
-      items.push(
-        <span key="hn-comments" className="flex items-center gap-1">
-          <span className="text-[var(--ink-soft)]">评</span>
-          <span className="font-semibold">{formatNumber(aggregates.totalComments)}</span>
-        </span>,
-      );
-    }
+    if (aggregates.totalPoints) items.push(`${formatNumber(aggregates.totalPoints)} 票`);
+    if (aggregates.totalComments) items.push(`${formatNumber(aggregates.totalComments)} 评论`);
   }
+  if (aggregates.totalUpvotes && !hasTwitter) items.push(`${formatNumber(aggregates.totalUpvotes)} 赞`);
 
-  if (hasReddit) {
-    if (aggregates.totalScore) {
-      items.push(
-        <span key="score" className="flex items-center gap-1">
-          <span className="text-[var(--ink-soft)]">赞</span>
-          <span className="font-semibold">{formatNumber(aggregates.totalScore)}</span>
-        </span>,
-      );
-    }
-  }
+  return items.join(" · ");
+}
 
-  if (hasZhihu) {
-    if (aggregates.totalUpvotes) {
-      items.push(
-        <span key="upvotes" className="flex items-center gap-1">
-          <span className="text-[var(--ink-soft)]">赞</span>
-          <span className="font-semibold">{formatNumber(aggregates.totalUpvotes)}</span>
-        </span>,
-      );
-    }
-  }
+// 单个事件摘要行（去色块，纯排版）
+function EventSummaryItem({ event }: { event: HotspotEventSummary }) {
+  return (
+    <div className="pt-3 first:pt-0">
+      {/* 来源 · 作者 · 时间 · 评分 */}
+      <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--text-muted)" }}>
+        <span>{SOURCE_ICONS[event.sourceType] || "📌"}</span>
+        <span>{SOURCE_LABELS[event.sourceType] || event.sourceLabel}</span>
+        {event.author && (
+          <>
+            <span>·</span>
+            <span>@{event.author}</span>
+          </>
+        )}
+        {event.publishedAt && (
+          <>
+            <span>·</span>
+            <span>{formatRelativeTime(event.publishedAt)}</span>
+          </>
+        )}
+        <span>·</span>
+        <span>真实 {Math.round(event.authenticityScore * 100)}%</span>
+        <span>·</span>
+        <span>相关 {Math.round(event.relevanceScore * 100)}%</span>
+        <a
+          href={event.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto flex-shrink-0 opacity-40 hover:opacity-80 transition-opacity"
+          title="查看原文"
+        >
+          <svg width="12" height="12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+          </svg>
+        </a>
+      </div>
+      {/* 标题 */}
+      <a
+        href={event.sourceUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-1 block text-sm font-medium leading-snug text-[var(--ink)] hover:text-[var(--ember)] transition-colors truncate"
+        title={event.title}
+      >
+        {event.title}
+      </a>
+      {/* 互动数据 */}
+      {event.engagementDetails && (() => {
+        const parts: string[] = [];
+        if (event.engagementDetails.likes) parts.push(`${formatNumber(event.engagementDetails.likes)} 赞`);
+        if (event.engagementDetails.retweets) parts.push(`${formatNumber(event.engagementDetails.retweets)} 转`);
+        if (event.engagementDetails.views) parts.push(`${formatNumber(event.engagementDetails.views)} 浏览`);
+        if (event.engagementDetails.points) parts.push(`${formatNumber(event.engagementDetails.points)} 票`);
+        if (event.engagementDetails.comments) parts.push(`${formatNumber(event.engagementDetails.comments)} 评论`);
+        if (event.engagementDetails.score !== undefined) parts.push(`${formatNumber(event.engagementDetails.score)} 赞`);
+        return parts.length > 0 ? (
+          <div className="mt-1 text-xs" style={{ color: "var(--text-muted)" }}>
+            {parts.join(" · ")}
+          </div>
+        ) : null;
+      })()}
+    </div>
+  );
+}
 
-  // 通用评论数（如果没有特定来源的评论）
-  if (aggregates.totalComments && !hasHackerNews) {
-    const hasOtherComments = items.some((item) => {
-      const key = (item as React.ReactElement)?.key;
-      return key === "hn-comments";
-    });
-    if (!hasOtherComments) {
-      items.push(
-        <span key="comments" className="flex items-center gap-1">
-          <span className="text-[var(--ink-soft)]">评</span>
-          <span className="font-semibold">{formatNumber(aggregates.totalComments)}</span>
-        </span>,
-      );
-    }
-  }
-
-  if (items.length === 0) return null;
+// 事件摘要列表
+function EventSummaryList({ events }: { events: HotspotEventSummary[] }) {
+  const [showAll, setShowAll] = useState(false);
+  const displayEvents = showAll ? events : events.slice(0, 3);
+  const hasMore = events.length > 3;
 
   return (
-    <div className="flex flex-wrap gap-3 text-xs">
-      {items}
+    <div className="mt-3 pt-3" style={{ borderTop: "1px solid rgba(8,17,31,0.06)" }}>
+      <div className="flex items-center justify-between">
+        <span className="text-xs" style={{ color: "var(--text-muted)" }}>关联事件 ({events.length})</span>
+        {hasMore && (
+          <button
+            type="button"
+            onClick={() => setShowAll(!showAll)}
+            className="text-xs text-[var(--ember)] hover:underline"
+          >
+            {showAll ? "收起" : `查看全部 ${events.length} 个`}
+          </button>
+        )}
+      </div>
+      <div className="mt-2">
+        {displayEvents.map((event) => (
+          <EventSummaryItem key={event.id} event={event} />
+        ))}
+      </div>
     </div>
   );
 }
 
 export function HotspotCard({
   hotspot,
-  selected = false,
-  onSelect,
-  expandedReasons,
-  onToggleReason,
 }: HotspotCardProps) {
-  const [showSources, setShowSources] = useState(true);
-  const [showEvents, setShowEvents] = useState(true);
-  const [showReasonLocal, setShowReasonLocal] = useState(true);
+  const [showSources, setShowSources] = useState(false);
+  const [showEvents, setShowEvents] = useState(false);
+  const [isHovered, setIsHovered] = useState(false);
 
   const sourceTypes = getSourceTypes(hotspot.supportingUrls);
-  // 理由展开：优先使用外部状态，否则使用本地状态
-  const isReasonExpanded = expandedReasons?.has(hotspot.id) ?? showReasonLocal;
-  const uniqueSourceCount = new Set(hotspot.supportingUrls.map(getSourceKey)).size;
+  const totalScore = hotspot.score;
 
   return (
-    <article className={`mb-4 rounded-[1.4rem] bg-white/70 p-5 transition-opacity ${selected ? "ring-2 ring-[var(--ember)]" : ""}`}>
-      {/* 头部：来源标签、评分、时间 */}
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        {/* 选择框 */}
-        {onSelect && (
-          <input
-            type="checkbox"
-            checked={selected}
-            onChange={(e) => onSelect(hotspot.id, e.target.checked)}
-            className="w-4 h-4 rounded border-[rgba(8,17,31,0.15)] text-[var(--ember)] focus:ring-[var(--ember)] focus:ring-offset-0 cursor-pointer"
-          />
-        )}
-
-        {/* 来源类型标签 */}
-        <div className="flex items-center gap-1">
-          {sourceTypes.slice(0, 3).map(({ kind, label, count }) => (
-            <span
-              key={kind}
-              className="rounded-full bg-[var(--ember-soft)] px-2 py-0.5 text-xs font-semibold text-[var(--ember)]"
-              title={`${label}: ${count} 条来源`}
-            >
-              {label}
-              {count > 1 && <span className="ml-0.5 opacity-70">×{count}</span>}
-            </span>
-          ))}
-          {sourceTypes.length > 3 && (
-            <span className="rounded-full bg-[rgba(8,17,31,0.06)] px-2 py-0.5 text-xs text-[var(--ink-soft)]">
-              +{sourceTypes.length - 3}
-            </span>
-          )}
-        </div>
-
-        {/* 热点评分 */}
-        <span className={`mono rounded-full px-2 py-0.5 font-semibold ${getScoreColorClass(hotspot.score)}`}>
-          热点 {formatPercent(hotspot.score)}
-        </span>
-
-        {/* 发布时间范围 - 使用最新发布时间 */}
-        {hotspot.latestPublishedAt && (
-          <span className={`mono ${getTimeColorClass(hotspot.latestPublishedAt)}`} title={`最新发布时间: ${hotspot.latestPublishedAt}`}>
-            {formatRelativeTime(hotspot.latestPublishedAt)}
-          </span>
-        )}
-      </div>
-
-      {/* 标签行 */}
-      <div className="mt-3 flex items-start justify-between gap-3">
-        <div className="flex-1 min-w-0">
-          <h3 className="font-semibold text-[var(--ink)] leading-snug">
-            {hotspot.label}
-          </h3>
-        </div>
-
-        {/* 多维度评分 */}
-        <div className="flex flex-shrink-0 items-center gap-1.5" title="新=新鲜度 多=多样性 热=互动度">
-          <span className="mono rounded-full bg-[rgba(8,17,31,0.04)] px-1.5 py-0.5 text-xs text-[var(--ink-soft)]" title="新鲜度：内容是否最新发布">
-            新 {formatPercent(hotspot.freshnessScore)}
-          </span>
-          <span className="mono rounded-full bg-[rgba(8,17,31,0.04)] px-1.5 py-0.5 text-xs text-[var(--ink-soft)]" title="多样性：来源平台是否多样">
-            多 {formatPercent(hotspot.diversityScore)}
-          </span>
-          <span className="mono rounded-full bg-[rgba(8,17,31,0.04)] px-1.5 py-0.5 text-xs text-[var(--ink-soft)]" title="互动度：聚合互动数据是否活跃">
-            热 {formatPercent(hotspot.engagementScore)}
-          </span>
-        </div>
-      </div>
-
-      {/* 抓取时间 */}
-      <div className="mt-1 text-xs text-[var(--ink-soft)]">
-        抓取于 {formatRelativeTime(hotspot.createdAt)}
-      </div>
-
-      {/* AI 摘要 */}
-      <div className="mt-3">
-        <p className="text-sm leading-6 text-[var(--ink-soft)]">{hotspot.summary}</p>
-      </div>
-
-      {/* 互动数据聚合 */}
-      {(() => {
-        const engagement = renderEngagementAggregates(hotspot.engagementAggregates, sourceTypes);
-        return engagement ? <div className="mt-3">{engagement}</div> : null;
-      })()}
-
-      {/* 来源列表 */}
-      <div className="mt-3 border-t border-[rgba(8,17,31,0.08)] pt-3">
+    <article
+      className={`relative mb-4 transition-all duration-300 ease-out`}
+      style={{
+        background: "var(--card-bg)",
+        borderRadius: "var(--card-radius)",
+        padding: "24px",
+        boxShadow: isHovered ? "var(--card-shadow-hover)" : "var(--card-shadow)",
+        transform: isHovered ? "translateY(-2px)" : "translateY(0)",
+      }}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+    >
+      {/* 操作按钮 - 右上角，hover 时淡入 */}
+      <div
+        className="absolute top-4 right-4 flex items-center gap-1 transition-opacity duration-300"
+        style={{ opacity: isHovered ? 1 : 0 }}
+      >
         <button
           type="button"
-          onClick={() => setShowSources(!showSources)}
-          className="flex items-center gap-1 text-xs font-semibold text-[var(--ink-soft)] hover:text-[var(--ember)] transition-colors"
+          className="rounded-full p-1.5 text-xs opacity-40 hover:opacity-80 hover:bg-[rgba(8,17,31,0.04)] transition-all"
+          title="置顶"
         >
-          <svg className={`w-3.5 h-3.5 transition-transform ${showSources ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
           </svg>
-          {showSources ? "收起" : "查看"}来源链接 ({uniqueSourceCount} 个来源)
         </button>
-
-        {showSources && (
-          <div className="mt-2 flex flex-wrap gap-2">
-            {hotspot.supportingUrls.slice(0, 10).map((url, index) => {
-              const sourceKey = getSourceKey(url);
-              const sourceLabel = getSourceDisplay(url);
-              return (
-                <div key={`${url}-${index}`} className="group relative">
-                  <a
-                    href={url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-1.5 rounded-full border border-[rgba(8,17,31,0.08)] bg-[var(--paper-strong)] px-2.5 py-1 text-xs text-[var(--ink-soft)] hover:border-[var(--ember)] hover:text-[var(--ember)] max-w-[10rem] truncate transition-colors"
-                    title={url}
-                  >
-                    <span className="font-medium">{sourceLabel}</span>
-                    <svg className="w-3 h-3 flex-shrink-0 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                    </svg>
-                  </a>
-                </div>
-              );
-            })}
-            {hotspot.supportingUrls.length > 10 && (
-              <span className="rounded-full bg-[rgba(8,17,31,0.04)] px-2.5 py-1 text-xs text-[var(--ink-soft)]">
-                +{hotspot.supportingUrls.length - 10} 更多
-              </span>
-            )}
-          </div>
-        )}
+        <button
+          type="button"
+          className="rounded-full p-1.5 text-xs opacity-40 hover:opacity-80 hover:bg-[rgba(8,17,31,0.04)] transition-all"
+          title="停用监控"
+        >
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="rounded-full p-1.5 text-xs opacity-40 hover:opacity-80 hover:bg-[rgba(240,107,56,0.1)] hover:text-[var(--ember)] transition-all"
+          title="删除"
+        >
+          <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+          </svg>
+        </button>
       </div>
 
-      {/* 关联事件详情列表 */}
-      {hotspot.events && hotspot.events.length > 0 && (
-        <div className="mt-3 border-t border-[rgba(8,17,31,0.08)] pt-3">
-          <button
-            type="button"
-            onClick={() => setShowEvents(!showEvents)}
-            className="flex items-center gap-1 text-xs font-semibold text-[var(--ink-soft)] hover:text-[var(--ember)] transition-colors"
-          >
-            <svg className={`w-3.5 h-3.5 transition-transform ${showEvents ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-            </svg>
-            {showEvents ? "收起" : "查看"}关联事件 ({hotspot.events.length})
-          </button>
-          {showEvents && <div className="mt-2"><EventSummaryList events={hotspot.events} /></div>}
+      {/* 信任锚点线 */}
+      <div className="flex items-center gap-1.5 text-xs" style={{ color: "var(--text-muted)", fontSize: 12 }}>
+        {/* 多来源图标串 */}
+        {sourceTypes.slice(0, 2).map(({ kind }) => (
+          <span key={kind} className="tracking-tight">{SOURCE_ICONS[kind]}</span>
+        ))}
+        {sourceTypes.length > 2 && (
+          <span>+{sourceTypes.length - 2} 个来源</span>
+        )}
+        <span>·</span>
+        <span style={{ color: "var(--text-secondary)", fontWeight: 500 }}>全网热度 {formatPercent(totalScore)}</span>
+        <span>·</span>
+        {(() => {
+          const engagement = hotspot.engagementAggregates;
+          if (!engagement) return <span>多源聚合</span>;
+          const parts: string[] = [];
+          if (engagement.totalLikes) parts.push(`${formatNumber(engagement.totalLikes)} 赞`);
+          if (engagement.totalRetweets) parts.push(`${formatNumber(engagement.totalRetweets)} 转发`);
+          if (engagement.totalViews) parts.push(`${formatNumber(engagement.totalViews)} 浏览`);
+          return parts.length > 0 ? parts.join(" · ") : "多源聚合";
+        })()}
+        <span>·</span>
+        <span>{hotspot.latestPublishedAt ? formatRelativeTime(hotspot.latestPublishedAt) : formatRelativeTime(hotspot.createdAt)}</span>
+      </div>
+
+      {/* 标题 */}
+      <h3
+        className="mt-3 font-semibold leading-snug"
+        style={{ fontSize: 16, color: "#111111", lineHeight: 1.4 }}
+      >
+        {hotspot.label}
+      </h3>
+
+      {/* AI 智能总结 */}
+      <p
+        className="mt-2"
+        style={{ fontSize: 14, color: "var(--text-secondary)", lineHeight: 1.6, fontWeight: 400 }}
+      >
+        {hotspot.summary}
+      </p>
+
+      {/* 原始来源链路（胶囊按钮，常态极弱，hover 加深） */}
+      {hotspot.supportingUrls.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-1.5">
+          {hotspot.supportingUrls.slice(0, 3).map((url, i) => {
+            const kind = parseSourceFromUrl(url);
+            return (
+              <a
+                key={`${url}-${i}`}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs transition-colors"
+                style={{
+                  color: "var(--text-muted)",
+                  border: "1px solid rgba(8,17,31,0.1)",
+                  borderRadius: 999,
+                  padding: "2px 8px",
+                  fontSize: 11,
+                  opacity: 0.6,
+                }}
+                onMouseEnter={(e) => {
+                  (e.target as HTMLElement).style.opacity = "1";
+                  (e.target as HTMLElement).style.color = "var(--ember)";
+                  (e.target as HTMLElement).style.borderColor = "var(--ember)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.target as HTMLElement).style.opacity = "0.6";
+                  (e.target as HTMLElement).style.color = "var(--text-muted)";
+                  (e.target as HTMLElement).style.borderColor = "rgba(8,17,31,0.1)";
+                }}
+              >
+                {SOURCE_ICONS[kind]} {SOURCE_LABELS[kind]}
+                <svg width="10" height="10" fill="none" stroke="currentColor" viewBox="0 0 24 24" style={{ opacity: 0.5 }}>
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                </svg>
+              </a>
+            );
+          })}
+          {hotspot.supportingUrls.length > 3 && (
+            <button
+              type="button"
+              onClick={() => setShowSources(!showSources)}
+              className="inline-flex items-center gap-1 text-xs transition-colors"
+              style={{ color: "var(--text-muted)", border: "1px solid rgba(8,17,31,0.1)", borderRadius: 999, padding: "2px 8px", fontSize: 11, opacity: 0.6 }}
+            >
+              +{hotspot.supportingUrls.length - 3} 更多
+            </button>
+          )}
         </div>
       )}
 
-      {/* AI 判断理由 */}
+      {/* 来源链接展开 */}
+      {showSources && hotspot.supportingUrls.length > 3 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {hotspot.supportingUrls.slice(3).map((url, i) => {
+            const kind = parseSourceFromUrl(url);
+            return (
+              <a
+                key={`extra-${url}-${i}`}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 text-xs transition-colors"
+                style={{ color: "var(--text-muted)", border: "1px solid rgba(8,17,31,0.1)", borderRadius: 999, padding: "2px 8px", fontSize: 11, opacity: 0.6 }}
+                onMouseEnter={(e) => {
+                  (e.target as HTMLElement).style.opacity = "1";
+                  (e.target as HTMLElement).style.color = "var(--ember)";
+                  (e.target as HTMLElement).style.borderColor = "var(--ember)";
+                }}
+                onMouseLeave={(e) => {
+                  (e.target as HTMLElement).style.opacity = "0.6";
+                  (e.target as HTMLElement).style.color = "var(--text-muted)";
+                  (e.target as HTMLElement).style.borderColor = "rgba(8,17,31,0.1)";
+                }}
+              >
+                {SOURCE_ICONS[kind]} {SOURCE_LABELS[kind]}
+              </a>
+            );
+          })}
+        </div>
+      )}
+
+      {/* AI 研判理由 - 默认展开 */}
       {hotspot.reason && (
-        <div className="mt-3 border-t border-[rgba(8,17,31,0.08)] pt-3">
+        <p
+          className="mt-3 leading-relaxed"
+          style={{ fontSize: 12, color: "var(--text-reason)", fontStyle: "italic", lineHeight: 1.7 }}
+        >
+          <svg className="inline w-3 h-3 mr-1 -mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+          </svg>
+          {hotspot.reason}
+        </p>
+      )}
+
+      {/* 关联事件详情列表 */}
+      {hotspot.events && hotspot.events.length > 0 && (
+        <div>
           <button
             type="button"
-            onClick={() => {
-              if (expandedReasons !== undefined) {
-                // 如果使用了外部状态管理
-                onToggleReason?.(hotspot.id);
-              } else {
-                // 使用本地状态
-                setShowReasonLocal(!showReasonLocal);
-              }
-            }}
-            className="flex items-center gap-1 text-xs font-semibold text-[var(--ink-soft)] hover:text-[var(--ember)] transition-colors"
+            onClick={() => setShowEvents(!showEvents)}
+            className="flex items-center gap-1.5 text-xs transition-colors hover:text-[var(--ember)]"
+            style={{ color: "var(--text-muted)", fontSize: 11 }}
           >
-            <svg className={`w-3.5 h-3.5 transition-transform ${isReasonExpanded ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className={`w-3 h-3 transition-transform ${showEvents ? "rotate-180" : ""}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
             </svg>
-            AI 聚类理由
+            关联事件 ({hotspot.events.length})
           </button>
-          {isReasonExpanded && (
-            <p className="mt-2 text-xs leading-5 text-[var(--ink-soft)] bg-[rgba(8,17,31,0.02)] rounded-lg p-3">
-              {hotspot.reason}
-            </p>
-          )}
+          {showEvents && <EventSummaryList events={hotspot.events} />}
         </div>
       )}
     </article>

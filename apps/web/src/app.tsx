@@ -268,10 +268,6 @@ export default function App() {
   const [selectedEventIds, setSelectedEventIds] = useState<Set<number>>(new Set());
   const [expandedReasons, setExpandedReasons] = useState<Set<number>>(new Set());
 
-  // 热点选择状态
-  const [selectedHotspotIds, setSelectedHotspotIds] = useState<Set<number>>(new Set());
-  const [expandedHotspotReasons, setExpandedHotspotReasons] = useState<Set<number>>(new Set());
-
   // 排序和筛选 hooks
   const eventsPrefs = useEventsPrefs(snapshot?.monitors ?? []);
   const hotspotsPrefs = useHotspotsPrefs(snapshot?.monitors ?? []);
@@ -822,48 +818,6 @@ export default function App() {
     }
   }
 
-  // 热点卡片批量选择处理
-  function handleSelectHotspotAll(select: boolean) {
-    if (select) {
-      setSelectedHotspotIds(new Set(filteredHotspots.map((h) => h.id)));
-    } else {
-      setSelectedHotspotIds(new Set());
-    }
-  }
-
-  function handleSelectHotspot(id: number, selected: boolean) {
-    setSelectedHotspotIds((prev) => {
-      const next = new Set(prev);
-      if (selected) {
-        next.add(id);
-      } else {
-        next.delete(id);
-      }
-      return next;
-    });
-  }
-
-  // 热点卡片全部展开/折叠
-  function handleExpandHotspotAll() {
-    setExpandedHotspotReasons(new Set(filteredHotspots.map((h) => h.id)));
-  }
-
-  function handleCollapseHotspotAll() {
-    setExpandedHotspotReasons(new Set());
-  }
-
-  function handleToggleHotspotReason(id: number) {
-    setExpandedHotspotReasons((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }
-
   return (
     <div className="min-h-screen px-4 py-4 sm:px-6 lg:px-8">
       <div className="mx-auto max-w-7xl space-y-5">
@@ -1113,7 +1067,7 @@ export default function App() {
                   </div>
                 } />
 
-              <Route path="/hotspots" element={<div><HotspotsFilterBar monitors={snapshot?.monitors ?? []} prefs={hotspotsPrefs.prefs} onSortChange={(field, order) => { hotspotsPrefs.setSort(field, order); loadFilteredHotspotsRef.current({ field, order }, hotspotsPrefs.prefs.filter, 1, hotspotsPageSize); }} onFilterChange={(filter) => { hotspotsPrefs.setFilter(filter); loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, filter, 1, hotspotsPageSize); }} onClearFilter={() => { hotspotsPrefs.setFilter({}); loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, {}, 1, hotspotsPageSize); }} onQuickFilterChange={(quick) => { hotspotsPrefs.setQuickFilter(quick); loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, { ...hotspotsPrefs.prefs.filter, timeRange: quick || undefined }, 1, hotspotsPageSize); }} /><Panel title="热点发现" body="这里展示主题热点监控聚合出的结果。"><HotspotPanel hotspots={filteredHotspots} loading={hotspotsLoading} selectedIds={selectedHotspotIds} expandedReasons={expandedHotspotReasons} onSelectAll={handleSelectHotspotAll} onSelectHotspot={handleSelectHotspot} onExpandAll={handleExpandHotspotAll} onCollapseAll={handleCollapseHotspotAll} onToggleReason={handleToggleHotspotReason} /></Panel><HotspotPagination page={hotspotsPage} pageSize={hotspotsPageSize} total={hotspotsTotal} onPageChange={(page) => loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, hotspotsPrefs.prefs.filter, page, hotspotsPageSize)} onPageSizeChange={(size) => loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, hotspotsPrefs.prefs.filter, 1, size)} /></div>} />
+              <Route path="/hotspots" element={<div><HotspotsFilterBar monitors={snapshot?.monitors ?? []} prefs={hotspotsPrefs.prefs} onSortChange={(field, order) => { hotspotsPrefs.setSort(field, order); loadFilteredHotspotsRef.current({ field, order }, hotspotsPrefs.prefs.filter, 1, hotspotsPageSize); }} onFilterChange={(filter) => { hotspotsPrefs.setFilter(filter); loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, filter, 1, hotspotsPageSize); }} onClearFilter={() => { hotspotsPrefs.setFilter({}); loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, {}, 1, hotspotsPageSize); }} onQuickFilterChange={(quick) => { hotspotsPrefs.setQuickFilter(quick); loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, { ...hotspotsPrefs.prefs.filter, timeRange: quick || undefined }, 1, hotspotsPageSize); }} /><Panel title="热点发现" body="这里展示主题热点监控聚合出的结果。"><HotspotPanel hotspots={filteredHotspots} loading={hotspotsLoading} /></Panel><HotspotPagination page={hotspotsPage} pageSize={hotspotsPageSize} total={hotspotsTotal} onPageChange={(page) => loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, hotspotsPrefs.prefs.filter, page, hotspotsPageSize)} onPageSizeChange={(size) => loadFilteredHotspotsRef.current(hotspotsPrefs.prefs.sort, hotspotsPrefs.prefs.filter, 1, size)} /></div>} />
                             <Route path="/settings" element={settingsForm ? (
                 <div className="space-y-6">
                   {/* 面板 1：SMTP 基础设施 */}

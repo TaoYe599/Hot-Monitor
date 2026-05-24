@@ -12,6 +12,15 @@
   --signal: #138a7b;
   --signal-soft: rgba(19, 138, 123, 0.16);
   --glow: rgba(255, 255, 255, 0.72);
+  /* HotSignalCard tokens */
+  --card-bg: #ffffff;
+  --card-bg-alt: #FBFBFC;
+  --card-radius: 16px;
+  --card-shadow: 0 4px 24px rgba(0,0,0,0.02);
+  --card-shadow-hover: 0 8px 40px rgba(0,0,0,0.06);
+  --text-muted: #94A3B8;
+  --text-secondary: #444444;
+  --text-reason: #778899;
 }
 
 * {
