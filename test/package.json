@@ -1,0 +1,13 @@
+{
+  "name": "hot-monitor-tests",
+  "version": "1.0.0",
+  "description": "Hot-Monitor PRD 功能测试套件",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/subscription-rules.test.js test/cooldown-evolution.test.js test/silent-period.test.js test/email-templates.test.js test/health-dashboard.test.js",
+    "test:watch": "node --test test/*.test.js --watch"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0"
+  }
+}
