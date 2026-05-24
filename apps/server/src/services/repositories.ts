@@ -9,9 +9,7 @@ import type {
   HotspotSortConfig,
   HotspotCluster,
   MonitorFormInput,
-  MonitorMode,
   MonitorRecord,
-  NotificationChannel,
   SettingsFormInput,
   SettingsRecord,
   SourceKind,
@@ -48,7 +46,8 @@ export class Repository {
   ) {}
 
   async listMonitors(): Promise<MonitorRecord[]> {
-    const result = await this.db.select().from(monitorsTable).orderBy(desc(monitorsTable.updatedAt));
+    // 切换排序为按主键 ID 降序排序，保证新创建的任务在最上方，且卡片位置不会因启用状态更新（修改 updatedAt）而改变
+    const result = await this.db.select().from(monitorsTable).orderBy(desc(monitorsTable.id));
     return result.map((monitor) => this.asMonitorRecord(monitor));
   }
 
@@ -67,14 +66,12 @@ export class Repository {
       .insert(monitorsTable)
       .values({
         name: input.name,
-        mode: input.mode,
         query: input.query,
         description: input.description ?? null,
         intervalMinutes: input.intervalMinutes,
         cooldownMinutes: input.cooldownMinutes,
         enabled: input.enabled,
         sources: input.sources,
-        notifyChannels: input.notifyChannels,
         createdAt,
         updatedAt: createdAt,
         lastRunAt: null,
@@ -92,14 +89,12 @@ export class Repository {
     };
 
     if (patch.name !== undefined) payload.name = patch.name;
-    if (patch.mode !== undefined) payload.mode = patch.mode;
     if (patch.query !== undefined) payload.query = patch.query;
     if (patch.description !== undefined) payload.description = patch.description ?? null;
     if (patch.intervalMinutes !== undefined) payload.intervalMinutes = patch.intervalMinutes;
     if (patch.cooldownMinutes !== undefined) payload.cooldownMinutes = patch.cooldownMinutes;
     if (patch.enabled !== undefined) payload.enabled = patch.enabled;
     if (patch.sources !== undefined) payload.sources = patch.sources;
-    if (patch.notifyChannels !== undefined) payload.notifyChannels = patch.notifyChannels;
 
     const result = await this.db
       .update(monitorsTable)
@@ -466,6 +461,8 @@ export class Repository {
         smtpUser: this.config.smtp.user ?? null,
         smtpPassword: this.config.smtp.password ?? null,
         smtpFrom: this.config.smtp.from ?? null,
+        eventRetentionDays: 30,
+        hotspotRetentionDays: 90,
         updatedAt: nowIso(),
       })
       .returning();
@@ -484,6 +481,8 @@ export class Repository {
         smtpUser: input.smtpUser,
         smtpPassword: input.smtpPassword,
         smtpFrom: input.smtpFrom,
+        eventRetentionDays: input.eventRetentionDays,
+        hotspotRetentionDays: input.hotspotRetentionDays,
         updatedAt: nowIso(),
       })
       .where(eq(settingsTable.id, 1))
@@ -493,7 +492,7 @@ export class Repository {
   }
 
   async logNotification(params: {
-    channel: NotificationChannel;
+    channel: "email";
     target: string;
     payload: Record<string, unknown>;
     status: "sent" | "failed";
@@ -544,13 +543,11 @@ export class Repository {
   createDefaultMonitorInput(): MonitorFormInput {
     return {
       name: "",
-      mode: "keyword",
       query: "",
       intervalMinutes: 15,
       cooldownMinutes: 60,
       enabled: true,
       sources: DEFAULT_SOURCE_CONFIG,
-      notifyChannels: ["email"],
     };
   }
 
@@ -562,7 +559,6 @@ export class Repository {
     return {
       ...row,
       sources,
-      mode: row.mode as MonitorMode,
     };
   }
 
@@ -644,6 +640,7 @@ export class Repository {
         minSupportingSources: input.minSupportingSources,
         deliveryFrequency: input.deliveryFrequency,
         deliveryTime: input.deliveryTime,
+        prefetchMinutes: input.prefetchMinutes,
         recipients: input.recipients,
         lastDispatchedAt: null,
         createdAt,
@@ -672,6 +669,7 @@ export class Repository {
     if (patch.minSupportingSources !== undefined) payload.minSupportingSources = patch.minSupportingSources;
     if (patch.deliveryFrequency !== undefined) payload.deliveryFrequency = patch.deliveryFrequency;
     if (patch.deliveryTime !== undefined) payload.deliveryTime = patch.deliveryTime;
+    if (patch.prefetchMinutes !== undefined) payload.prefetchMinutes = patch.prefetchMinutes;
     if (patch.recipients !== undefined) payload.recipients = patch.recipients;
     if (patch.lastDispatchedAt !== undefined) payload.lastDispatchedAt = patch.lastDispatchedAt;
 
@@ -844,12 +842,26 @@ export class Repository {
       minScore: row.minScore,
       minTrustScore: row.minTrustScore,
       minSupportingSources: row.minSupportingSources,
-      deliveryFrequency: row.deliveryFrequency as SubscriptionRuleRecord["deliveryFrequency"],
+      deliveryFrequency: row.deliveryFrequency as "instant" | "daily" | "weekly",
       deliveryTime: row.deliveryTime,
+      prefetchMinutes: row.prefetchMinutes,
       recipients: row.recipients,
       lastDispatchedAt: row.lastDispatchedAt,
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
+    };
+  }
+
+  async cleanupOldData(eventRetentionDays: number, hotspotRetentionDays: number): Promise<{ deletedEvents: number; deletedHotspots: number }> {
+    const eventThreshold = new Date(Date.now() - eventRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+    const hotspotThreshold = new Date(Date.now() - hotspotRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+
+    const deletedEvents = await this.db.delete(eventsTable).where(lte(eventsTable.createdAt, eventThreshold));
+    const deletedHotspots = await this.db.delete(hotspotsTable).where(lte(hotspotsTable.createdAt, hotspotThreshold));
+
+    return {
+      deletedEvents: deletedEvents.rowsAffected,
+      deletedHotspots: deletedHotspots.rowsAffected,
     };
   }
 }

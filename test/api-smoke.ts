@@ -227,6 +227,9 @@ async function main() {
     assert.equal(health.statusCode, 200, "health endpoint should respond");
 
     const dashboard = await app.inject({ method: "GET", url: "/api/dashboard" });
+    if (dashboard.statusCode !== 200) {
+      console.error(dashboard.json());
+    }
     assert.equal(dashboard.statusCode, 200, "dashboard endpoint should respond");
 
     const createKeywordMonitor = await app.inject({
@@ -234,7 +237,6 @@ async function main() {
       url: "/api/monitors",
       payload: {
         name: "Smoke Keyword Task",
-        mode: "keyword",
         query: "OpenAI GPT-5.4",
         description: "Keyword smoke test",
         intervalMinutes: 15,
@@ -246,7 +248,6 @@ async function main() {
           rss: true,
           github: true,
         },
-        notifyChannels: ["push", "webhook", "email"],
       },
     });
     assert.equal(createKeywordMonitor.statusCode, 201, "keyword monitor should be created");
@@ -270,7 +271,6 @@ async function main() {
       url: "/api/monitors",
       payload: {
         name: "Smoke Topic Task",
-        mode: "topic",
         query: "OpenAI",
         description: "Topic smoke test",
         intervalMinutes: 15,
@@ -282,7 +282,6 @@ async function main() {
           rss: true,
           github: true,
         },
-        notifyChannels: ["push", "webhook", "email"],
       },
     });
     assert.equal(createTopicMonitor.statusCode, 201, "topic monitor should be created");
@@ -299,7 +298,7 @@ async function main() {
 
     const hotspots = await app.inject({ method: "GET", url: "/api/hotspots" });
     assert.equal(hotspots.statusCode, 200, "hotspots endpoint should respond");
-    assert.ok(hotspots.json().length >= 1, "topic scan should create at least one hotspot");
+    assert.ok(hotspots.json().hotspots.length >= 1, "topic scan should create at least one hotspot");
 
     const settings = await app.inject({ method: "GET", url: "/api/settings" });
     assert.equal(settings.statusCode, 200, "settings endpoint should respond");
@@ -308,7 +307,6 @@ async function main() {
       method: "PATCH",
       url: "/api/settings",
       payload: {
-        webhookUrls: ["https://example.com/webhook"],
         emailTo: ["notify@example.com"],
         smtpHost: "smtp.example.com",
         smtpPort: 587,
@@ -316,9 +314,6 @@ async function main() {
         smtpUser: "tester",
         smtpPassword: "secret",
         smtpFrom: "bot@example.com",
-        vapidPublicKey: "public",
-        vapidPrivateKey: "private",
-        vapidSubject: "mailto:test@example.com",
       },
     });
     assert.equal(patchSettings.statusCode, 200, "settings should be patchable");
@@ -326,9 +321,7 @@ async function main() {
     const testNotification = await app.inject({
       method: "POST",
       url: "/api/settings/test-notification",
-      payload: {
-        channels: ["push", "webhook", "email"],
-      },
+      payload: {},
     });
     assert.equal(testNotification.statusCode, 200, "test notification endpoint should respond");
 

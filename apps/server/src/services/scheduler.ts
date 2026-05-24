@@ -25,7 +25,8 @@ export class MonitorScheduler {
       return false;
     }
     if (!monitor.lastRunAt) {
-      return false;
+      // 从未运行过的新监控任务，只要开启了开关，立刻触发冷启动扫描，解决冷启动 Bug
+      return true;
     }
 
     const lastRunAt = new Date(monitor.lastRunAt).getTime();
@@ -69,10 +70,20 @@ export class MonitorScheduler {
     });
   }
 
-  // =========================================================================
-  // 订阅规则定时简报与静默队列释放调度算法
-  // =========================================================================
+  // 健壮性时间格式化辅助函数，将类似 "1:36" 或 "9:5" 的时间片段标准化为两位补零的 "01:36" 或 "09:05"
+  private formatTimeStr(t: string): string {
+    const parts = t.split(":");
+    if (parts.length === 2) {
+      const hh = parts[0].trim().padStart(2, "0");
+      const mm = parts[1].trim().padStart(2, "0");
+      return `${hh}:${mm}`;
+    }
+    return t.trim();
+  }
 
+  // =========================================================================
+  // 订阅规则定时简报、预抓取与静默期释放调度算法
+  // =========================================================================
   private async subscriptionTick(): Promise<void> {
     const now = new Date();
     const hh = String(now.getHours()).padStart(2, "0");
@@ -85,11 +96,46 @@ export class MonitorScheduler {
     }
     this.lastDispatchedMinute = currentMinuteStr;
 
-    console.info(`[订阅调度] 当前时刻 ${currentMinuteStr}，开始评估定时简报与静默期释放逻辑...`);
+    console.info(`[订阅调度] 当前时刻 ${currentMinuteStr}，开始评估定时简报、预抓取与静默期释放逻辑...`);
 
     const settings = await this.repository.getSettings();
     const rules = await this.repository.listSubscriptionRules();
     const activeRules = rules.filter((r) => r.enabled);
+
+    // -------------------------------------------------------------------------
+    // 预扫描流程: 定时简报预抓取机制 (Prefetch before Digest) (P0)
+    // -------------------------------------------------------------------------
+    for (const rule of activeRules) {
+      if (rule.deliveryFrequency === "instant" || !rule.deliveryTime || !rule.prefetchMinutes || rule.prefetchMinutes <= 0) {
+        continue;
+      }
+
+      const deliveryTimes = rule.deliveryTime.split(",").map((t) => this.formatTimeStr(t));
+      // 计算未来 prefetchMinutes 分钟后的时间
+      const futureTime = new Date(now.getTime() + rule.prefetchMinutes * 60 * 1000);
+      const fHh = String(futureTime.getHours()).padStart(2, "0");
+      const fMm = String(futureTime.getMinutes()).padStart(2, "0");
+      const futureMinuteStr = `${fHh}:${fMm}`;
+
+      if (deliveryTimes.includes(futureMinuteStr)) {
+        console.info(`[预抓取触发] 规则 "${rule.name}" 预计在 ${rule.prefetchMinutes} 分钟后 (${rule.deliveryTime}) 投递简报，开始提前抓取关联的监控源...`);
+        // 获取规则关联的监控 ID并异步定向执行扫描
+        if (rule.monitorIds && rule.monitorIds.length > 0) {
+          const monitors = await this.repository.listMonitors();
+          const targetMonitors = monitors.filter((m) => rule.monitorIds!.includes(m.id) && m.enabled);
+          for (const monitor of targetMonitors) {
+            console.info(`[预抓取执行] 规则 "${rule.name}" 定向预扫描监控源 ${monitor.name} (ID: ${monitor.id})`);
+            void Promise.resolve()
+              .then(() => this.scanJobs.enqueue(monitor, "scheduler"))
+              .catch((err) => {
+                console.error(`[预抓取失败] 扫描监控源 ${monitor.id} 时发生异常:`, err);
+              });
+          }
+        } else {
+          console.info(`[预抓取跳过] 规则 "${rule.name}" 未关联具体监控任务 ID，跳过预扫描。`);
+        }
+      }
+    }
 
     // -------------------------------------------------------------------------
     // 流程 A: 订阅定时汇总简报 (Daily/Weekly Digest)
@@ -178,58 +224,30 @@ export class MonitorScheduler {
     }
 
     // -------------------------------------------------------------------------
-    // 流程 B: 早上 08:00 唤醒清空释放静默期积压队列
+    // 流程 B: 早上 08:00 唤醒清空释放静默期积压队列 (P1)
     // -------------------------------------------------------------------------
     if (currentMinuteStr === "08:00") {
-      console.info(`[静默释放] 早上 08:00 免打扰静默期结束，开始装箱归档发信...`);
+      console.info(`[静默释放] 早上 08:00 免打扰静默期结束，调用通知服务统一释放静默期积压...`);
       try {
-        const silentItems = await this.repository.listSilentQueue();
-        if (silentItems.length === 0) {
-          return;
-        }
-
-        // 按 ruleId 分组装箱
-        const grouped = new Map<number, number[]>();
-        for (const item of silentItems) {
-          const list = grouped.get(item.ruleId) ?? [];
-          list.push(item.hotspotId);
-          grouped.set(item.ruleId, list);
-        }
-
-        for (const [ruleId, hotspotIds] of grouped.entries()) {
-          const rule = activeRules.find((r) => r.id === ruleId);
-          if (!rule) {
-            // 规则已被停用或删除，直接清空对应的队列
-            await this.repository.clearSilentQueue(ruleId);
-            continue;
-          }
-
-          // 提取热点数据
-          const hotspots = [];
-          for (const hid of hotspotIds) {
-            // 从数据库拉取具体热点
-            const hotspotObj = await this.repository.getHotspot(hid);
-            if (hotspotObj) {
-              const events = await this.repository.getEventsByClusterId(hid);
-              hotspots.push({ ...hotspotObj, events });
-            }
-          }
-
-          if (hotspots.length > 0) {
-            const subject = `[🌅 早报汇总] Hot Monitor 夜间重大预警合并: ${rule.name}`;
-            const htmlContent = this.notificationService.renderPeriodicDigestEmail(hotspots, rule, true);
-            await this.notificationService.sendCustomEmail(rule.recipients, subject, htmlContent, settings, {
-              kind: "subscription_silent_release",
-              ruleId: rule.id,
-              count: hotspots.length,
-            });
-          }
-
-          // 发送完毕，清空对应的静默记录
-          await this.repository.clearSilentQueue(ruleId);
-        }
+        await this.notificationService.releaseSilentQueue();
       } catch (err) {
         console.error(`[静默释放失败] 发生异常:`, err);
+      }
+    }
+
+    // -------------------------------------------------------------------------
+    // 流程 C: 每天凌晨 03:00 自动执行生命周期数据清理 (P2)
+    // -------------------------------------------------------------------------
+    if (currentMinuteStr === "03:00") {
+      console.info(`[生命周期清理] 每天凌晨 03:00，开始自动清理过期事件与热点数据...`);
+      try {
+        const deleted = await this.repository.cleanupOldData(
+          settings.eventRetentionDays,
+          settings.hotspotRetentionDays
+        );
+        console.info(`[生命周期清理] 自动清理完成：删除了 ${deleted.deletedEvents} 个事件，${deleted.deletedHotspots} 个热点。`);
+      } catch (err) {
+        console.error(`[生命周期清理] 自动清理发生异常:`, err);
       }
     }
   }

@@ -140,27 +140,12 @@ export class NotificationService {
     });
   }
 
-  async notifyEvent(event: VerifiedEvent, channels: NotificationChannel[]): Promise<void> {
-    await this.dispatch(
-      {
-        title: `Hot Monitor 命中: ${event.title}`,
-        body: event.summary,
-        url: event.sourceUrl,
-        tag: `event-${event.id}`,
-        type: "event",
-        payload: {
-          kind: "event",
-          event,
-        },
-      },
-      channels,
-    );
-  }
+
 
   // 重构系统热点通知入口：改写为调用订阅路由匹配引擎 (SubscriptionDispatchEngine)
   async notifyHotspot(
     hotspot: HotspotCluster,
-    monitor: { name: string; notifyChannels: NotificationChannel[] },
+    monitor: { name: string },
   ): Promise<void> {
     // 1. 保留原本的 SSE 事件总线消息发布，确保前端雷达盘实时同步接收
     this.bus.publish({
@@ -432,6 +417,69 @@ export class NotificationService {
     );
   }
 
+  /**
+   * 唤醒并清空释放静默期积压的所有热点，按照订阅规则合并汇总发信
+   */
+  async releaseSilentQueue(): Promise<void> {
+    console.info("[静默释放] 开始装箱释放免打扰静默期积压队列...");
+    const settings = await this.repository.getSettings();
+    const rules = await this.repository.listSubscriptionRules();
+    const activeRules = rules.filter((r) => r.enabled);
+
+    try {
+      const silentItems = await this.repository.listSilentQueue();
+      if (silentItems.length === 0) {
+        console.info("[静默释放] 静默期队列为空，无需释放。");
+        return;
+      }
+
+      // 按 ruleId 分组装箱
+      const grouped = new Map<number, number[]>();
+      for (const item of silentItems) {
+        const list = grouped.get(item.ruleId) ?? [];
+        list.push(item.hotspotId);
+        grouped.set(item.ruleId, list);
+      }
+
+      for (const [ruleId, hotspotIds] of grouped.entries()) {
+        const rule = activeRules.find((r) => r.id === ruleId);
+        if (!rule) {
+          // 规则已被停用或删除，直接清空对应的队列
+          await this.repository.clearSilentQueue(ruleId);
+          continue;
+        }
+
+        // 提取热点数据
+        const hotspots = [];
+        for (const hid of hotspotIds) {
+          // 从数据库拉取具体热点
+          const hotspotObj = await this.repository.getHotspot(hid);
+          if (hotspotObj) {
+            const events = await this.repository.getEventsByClusterId(hid);
+            hotspots.push({ ...hotspotObj, events });
+          }
+        }
+
+        if (hotspots.length > 0) {
+          const subject = `[🌅 早报汇总] Hot Monitor 夜间重大预警合并: ${rule.name}`;
+          const htmlContent = this.renderPeriodicDigestEmail(hotspots, rule, true);
+          await this.sendCustomEmail(rule.recipients, subject, htmlContent, settings, {
+            kind: "subscription_silent_release",
+            ruleId: rule.id,
+            count: hotspots.length,
+          });
+        }
+
+        // 发送完毕，清空对应的静默记录
+        await this.repository.clearSilentQueue(ruleId);
+      }
+      console.info("[静默释放] 积压队列清空与汇总邮件发送顺利完成。");
+    } catch (err) {
+      console.error("[静默释放] 自动释放静默期任务发生异常:", err);
+      throw err;
+    }
+  }
+
   // =========================================================================
   // Apple 降级拟物 HTML 发送模板渲染器
   // =========================================================================
@@ -462,8 +510,15 @@ export class NotificationService {
       const event = eventByUrl.get(url);
       // 优先使用事件中的真实信任分，否则使用基于 URL 的启发式估算
       const trustScore = event ? Math.round(event.authenticityScore * 100) / 100 : (idx === 0 ? 0.95 : 0.88);
-      const isOfficial = trustScore >= 0.9;
-      const trustTag = isOfficial ? "官方权威" : event ? "技术社区" : "高分技术社区";
+      let trustTag = "新闻资讯";
+      if (trustScore >= 0.95) {
+        trustTag = "官方机构";
+      } else if (trustScore >= 0.8) {
+        trustTag = "技术社区";
+      } else if (trustScore >= 0.7) {
+        trustTag = "社交媒体";
+      }
+      const isOfficial = trustScore >= 0.95;
       const sourceLabel = event?.sourceLabel || "";
 
       return `
@@ -748,12 +803,27 @@ export class NotificationService {
                       ${h.events && h.events.length > 0 ? `
                       <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed rgba(8,17,31,0.06);">
                         <div style="font-size: 11px; font-weight: 700; color: #8f9ca9; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.05em;">主要信源头条</div>
-                        ${h.events.slice(0, 2).map(e => `
-                        <div style="margin-bottom: 4px; font-size: 12px; color: #08111f;">
+                        ${h.events.slice(0, 2).map(e => {
+                          const trustScore = e.authenticityScore;
+                          let trustTag = "新闻资讯";
+                          if (trustScore >= 0.95) {
+                            trustTag = "官方机构";
+                          } else if (trustScore >= 0.8) {
+                            trustTag = "技术社区";
+                          } else if (trustScore >= 0.7) {
+                            trustTag = "社交媒体";
+                          }
+                          const tagColor = trustScore >= 0.95 ? "#10b981" : trustScore >= 0.8 ? "#0284c7" : trustScore >= 0.7 ? "#d97706" : "#64748b";
+                          const tagBg = trustScore >= 0.95 ? "#ecfdf5" : trustScore >= 0.8 ? "#e0f2fe" : trustScore >= 0.7 ? "#fef3c7" : "#f1f5f9";
+                          return `
+                        <div style="margin-bottom: 6px; font-size: 12px; color: #08111f;">
                           • <a href="${e.sourceUrl}" target="_blank" style="color: #475569; text-decoration: none; font-weight: 500;">${e.title}</a> 
                           <span style="font-size: 10px; color: #94a3b8; margin-left: 4px;">(${e.sourceLabel})</span>
-                        </div>
-                        `).join("")}
+                          <span style="font-size: 9px; font-weight: 600; color: ${tagColor}; background-color: ${tagBg}; padding: 1px 5px; border-radius: 4px; margin-left: 4px; display: inline-block; vertical-align: middle;">
+                            ${trustTag}
+                          </span>
+                        </div>`;
+                        }).join("")}
                       </div>
                       ` : ""}
                     </td>

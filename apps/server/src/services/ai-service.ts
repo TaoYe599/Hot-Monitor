@@ -459,8 +459,8 @@ export class AiService {
       score: Number(
         Math.min(
           1,
-          (candidate.trustScore * 0.45) +
-            (candidate.engagementScore * 0.25) +
+          (candidate.trustScore * 0.4) +
+            (candidate.engagementScore * 0.3) +
             (computeFreshnessScore(candidate.publishedAt) * 0.3),
         ).toFixed(3),
       ),
@@ -468,7 +468,7 @@ export class AiService {
       freshnessScore: computeFreshnessScore(candidate.publishedAt),
       engagementScore: candidate.engagementScore,
       shouldNotify: candidate.trustScore >= 0.55,
-      reason: "Fallback hotspot clustering based on freshness, trust, and engagement.",
+      reason: "Heuristic 降级模式下的热点聚类，基于统一的计分公式 (0.4 信任分, 0.3 互动分, 0.3 新鲜分)。",
       supportingUrls: [candidate.url],
       // 标记为 Heuristic 模式生成
       isHeuristic: true,
@@ -489,6 +489,14 @@ export class AiService {
             role: "system",
             content:
               `你是一个AI热点信号梳理专家。请将候选内容整理为4到8个高价值热点。
+              
+**智能模式自适应（精准词 vs 泛化词）**：
+- 当监控关键词（query）是一个非常精准的产品名、版本号或特定实体（例如："DeepSeek-v4"、"Claude Code"、"Llama-3.1"）时，系统自动识别为 **精准提取模式**。在此模式下，你需要：
+  - 降低对“来源多样性”的硬性要求，即使该热点只有一个高可信信源支撑，也应该将其提取为独立的热点簇，避免高价值精准情报被泛化背景淹没或被强行合并到大主题中。
+  - 热点标题（label）应极其精准地聚焦在此产品或版本上。
+- 当监控关键词是一个宽泛的主题（例如："多模态模型"、"AI 编程工具"、"大模型推理"）时，采用 **宽泛主题聚类模式**。在此模式下，你需要：
+  - 将讨论同一技术趋势或行业动态的多个候选源进行合并归纳，提炼出有代表性、跨渠道的主题热点。
+  - 热点标题（label）和摘要（summary）应该体现高水平的抽象和行业洞察。
 
 **重要：必须严格遵循以下 JSON 输出格式，不要添加或省略任何字段：**
 \`\`\`json

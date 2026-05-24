@@ -26,6 +26,9 @@ if (!existingProxy) {
   }
 }
 
+// 强制指定 global-agent 忽略代理的白名单域名（包含 QQ 邮箱、Gmail 等主流发信服务器及本地回路），解决代理发信冲突
+process.env.GLOBAL_AGENT_NO_PROXY = "smtp.qq.com,smtp.gmail.com,127.0.0.1,localhost";
+
 // Bootstrap global-agent to route Node.js fetch through HTTPS_PROXY (must be before other imports)
 import globalAgent from "global-agent";
 globalAgent.bootstrap();

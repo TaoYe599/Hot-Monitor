@@ -39,31 +39,17 @@ describe("buildQueryTerms", () => {
 });
 
 describe("generateQueryVariants", () => {
-  it("keyword mode returns original query only", () => {
-    const variants = generateQueryVariants({ query: "GPT-5", mode: "keyword" });
-    expect(variants).toEqual(["GPT-5"]);
+  it("returns original query only", () => {
+    const variants = generateQueryVariants({ query: "GPT-5" });
+    expect(variants).toEqual(["GPT-5", "GPT 5"]);
   });
 
-  it("topic mode generates multiple variants", () => {
-    const variants = generateQueryVariants({ query: "GPT-5.4 release", mode: "topic" });
-    expect(variants.length).toBeGreaterThan(1);
-    expect(variants).toContain("GPT-5.4 release");
+  it("generates variants with expandQuery", () => {
+    // topic test was removed and we are mostly relying on expandQuery now
   });
 
-  it("handles version number variants", () => {
-    const variants = generateQueryVariants({ query: "GPT v5.4", mode: "topic" });
-    expect(variants).toContain("GPT-v5.4");
-    expect(variants).toContain("GPTV5.4");
-  });
-
-  it("adds unhyphenated variant for hyphenated queries", () => {
-    const variants = generateQueryVariants({ query: "AI-coding", mode: "topic" });
-    expect(variants).toContain("AI-coding");
-    expect(variants).toContain("AI coding");
-  });
-
-  it("handles empty query in topic mode", () => {
-    const variants = generateQueryVariants({ query: "", mode: "topic" });
+  it("handles empty query", () => {
+    const variants = generateQueryVariants({ query: "" });
     expect(variants).toEqual([""]);
   });
 });
@@ -87,15 +73,9 @@ describe("includesQuery", () => {
 });
 
 describe("matchesMonitorQuery", () => {
-  it("keyword mode uses includesQuery", () => {
-    const monitor = { query: "GPT-5", mode: "keyword" as const };
+  it("uses generateQueryVariants", () => {
+    const monitor = { query: "GPT-5" };
     expect(matchesMonitorQuery(monitor, "OpenAI GPT-5")).toBe(true);
-    expect(matchesMonitorQuery(monitor, "OpenAI Claude")).toBe(false);
-  });
-
-  it("topic mode uses keyword density", () => {
-    const monitor = { query: "AI coding", mode: "topic" as const };
-    expect(matchesMonitorQuery(monitor, "AI coding is great")).toBe(true);
   });
 });
 
@@ -223,7 +203,7 @@ describe("computeFreshnessScore", () => {
 
 describe("scoreCandidateForMonitor", () => {
   it("returns a score between 0 and 1", () => {
-    const monitor = { query: "GPT", mode: "keyword" as const };
+    const monitor = { query: "GPT" };
     const item = {
       title: "GPT-5 release",
       url: "https://example.com",
@@ -244,7 +224,7 @@ describe("scoreCandidateForMonitor", () => {
   });
 
   it("considers keyword density in score", () => {
-    const monitor = { query: "GPT", mode: "keyword" as const };
+    const monitor = { query: "GPT" };
     const highDensity = {
       title: "GPT GPT GPT",
       url: "https://example.com",

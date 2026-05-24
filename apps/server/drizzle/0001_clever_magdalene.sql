@@ -1,0 +1,1 @@
+ALTER TABLE `hotspots` ADD `is_heuristic` integer DEFAULT false NOT NULL;

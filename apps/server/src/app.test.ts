@@ -67,7 +67,6 @@ describe("Hot Monitor API", () => {
       url: "/api/monitors",
       payload: {
         name: "Async Monitor",
-        mode: "keyword",
         query: "OpenAI",
         description: "",
         intervalMinutes: 15,

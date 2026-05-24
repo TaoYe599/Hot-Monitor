@@ -5,7 +5,6 @@ import type {
   HotspotFilter,
   HotspotSortField,
   MonitorFormInput,
-  MonitorMode,
   MonitorRecord,
   NotificationStats,
   ScanJobRecord,
@@ -17,7 +16,6 @@ import type {
   SubscriptionRuleInput,
 } from "@hot-monitor/shared";
 import {
-  DEFAULT_NOTIFICATION_CHANNELS,
   DEFAULT_SOURCE_CONFIG,
 } from "@hot-monitor/shared";
 import React, {
@@ -48,14 +46,12 @@ import { api, splitLines } from "./lib/api";
 
 const defaultMonitorForm: MonitorFormInput = {
   name: "",
-  mode: "keyword",
   query: "",
   description: "",
   intervalMinutes: 15,
   cooldownMinutes: 60,
   enabled: true,
   sources: DEFAULT_SOURCE_CONFIG,
-  notifyChannels: DEFAULT_NOTIFICATION_CHANNELS,
 };
 
 function toSettingsForm(settings: SettingsRecord): SettingsFormInput {
@@ -67,25 +63,25 @@ function toSettingsForm(settings: SettingsRecord): SettingsFormInput {
     smtpUser: settings.smtpUser,
     smtpPassword: settings.smtpPassword,
     smtpFrom: settings.smtpFrom,
+    eventRetentionDays: settings.eventRetentionDays,
+    hotspotRetentionDays: settings.hotspotRetentionDays,
   };
 }
 
-function modeLabel(mode: MonitorMode): string {
-  return mode === "keyword" ? "关键词监控" : "主题热点";
+function modeLabel(): string {
+  return "关键词监控";
 }
 
-function queryLabel(mode: MonitorMode): string {
-  return mode === "keyword" ? "监控关键词" : "监控主题";
+function queryLabel(): string {
+  return "监控关键词";
 }
 
-function queryHint(mode: MonitorMode): string {
-  return mode === "keyword"
-    ? "输入你想精准盯住的词，比如 GPT-5.4、Claude Code、DeepSeek-R1。"
-    : "输入你想持续观察的方向，比如 OpenAI、AI 编程、多模态模型。";
+function queryHint(): string {
+  return "输入你想精准盯住的词，比如 GPT-5.4、Claude Code、DeepSeek-R1。";
 }
 
-function queryPrefix(mode: MonitorMode): string {
-  return mode === "keyword" ? "关键词" : "主题";
+function queryPrefix(): string {
+  return "关键词";
 }
 
 function jobSummary(job: ScanJobRecord): string {
@@ -716,6 +712,29 @@ export default function App() {
   const [smtpError, setSmtpError] = useState<string | null>(null);
   const [smtpTestBusy, setSmtpTestBusy] = useState(false);
 
+  const [cleanupBusy, setCleanupBusy] = useState(false);
+  const [cleanupNotice, setCleanupNotice] = useState<string | null>(null);
+
+  async function triggerManualCleanup() {
+    if (!window.confirm("确认要立即清理数据库中超过天数策略的历史事件和热点数据吗？此操作将永久删除数据且不可恢复！")) {
+      return;
+    }
+    setCleanupBusy(true);
+    setCleanupNotice(null);
+    try {
+      const data = await api.cleanupSettings({
+        eventRetentionDays: settingsForm?.eventRetentionDays,
+        hotspotRetentionDays: settingsForm?.hotspotRetentionDays,
+      });
+      setCleanupNotice(`历史数据清理完成！成功删除了 ${data.deletedEvents} 条过期事件，${data.deletedHotspots} 条过期热点。`);
+      await refresh();
+    } catch (err) {
+      alert(`数据清理失败：${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setCleanupBusy(false);
+    }
+  }
+
   // =========================================================================
   // 智能订阅通知规则交互逻辑群
   // =========================================================================
@@ -730,6 +749,7 @@ export default function App() {
     minScore: 0.7,
     minTrustScore: 0.55,
     minSupportingSources: 1,
+    prefetchMinutes: 0,
     deliveryFrequency: "instant",
     deliveryTime: "09:00",
     recipients: [],
@@ -898,20 +918,9 @@ export default function App() {
                             onChange={(event) => setMonitorForm((current) => ({ ...current, name: event.target.value }))} 
                           />
                         </Field>
-                        
-                        <Field label="监控模式">
-                          <select 
-                            value={monitorForm.mode} 
-                            onChange={(event) => setMonitorForm((current) => ({ ...current, mode: event.target.value as MonitorMode }))}
-                          >
-                            <option value="keyword">关键词精准监控</option>
-                            <option value="topic">主题热点聚类</option>
-                          </select>
-                        </Field>
-                        
-                        <Field label={queryLabel(monitorForm.mode)}>
+                        <Field label={queryLabel()}>
                           <input 
-                            placeholder={monitorForm.mode === "keyword" ? "输入监测的关键词，用逗号分隔，例如：GPT-5.4" : "输入想持续观察的主题方向，例如：OpenAI"} 
+                            placeholder="输入监测的关键词，用逗号分隔，例如：GPT-5.4" 
                             value={monitorForm.query} 
                             onChange={(event) => setMonitorForm((current) => ({ ...current, query: event.target.value }))} 
                           />
@@ -1022,7 +1031,7 @@ export default function App() {
                                 {/* 标签与频次归并 */}
                                 <p className="text-xs text-[var(--ink-soft)] font-medium flex items-center gap-1.5 select-none">
                                   <span className="h-1.5 w-1.5 rounded-full bg-[rgba(8,17,31,0.2)]" />
-                                  {modeLabel(monitor.mode)} · 每 {monitor.intervalMinutes} 分钟轮询 · {enabledSourcesCount} 个数据源
+                                  {modeLabel()} · 每 {monitor.intervalMinutes} 分钟轮询 · {enabledSourcesCount} 个数据源
                                 </p>
                               </div>
                               
@@ -1153,6 +1162,42 @@ export default function App() {
                     </form>
                   </Panel>
 
+                  {/* 面板 2: 数据生命周期策略 */}
+                  <Panel title="🧹 数据生命周期管理" body="配置数据库中扫描事件和热点汇总数据的最大保留期限。多余的数据将定期在每天凌晨 03:00 被自动清理以防磁盘无限膨胀，您也可以随时在此手动清理。">
+                    <div className="grid gap-5">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <Field label="原始事件保留天数" description="底层抓取到的未聚类事件最大保留期限。">
+                          <input type="number" min="1" value={settingsForm.eventRetentionDays} onChange={(event) => updateSettingsField((current) => ({ ...current, eventRetentionDays: Number(event.target.value) || 30 }))} />
+                        </Field>
+                        <Field label="热点数据保留天数" description="AI 聚类聚合出的高价值热点数据保留期限。">
+                          <input type="number" min="1" value={settingsForm.hotspotRetentionDays} onChange={(event) => updateSettingsField((current) => ({ ...current, hotspotRetentionDays: Number(event.target.value) || 90 }))} />
+                        </Field>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <button type="button" disabled={smtpBusy || cleanupBusy} onClick={saveSettings} className="rounded-full bg-[var(--ink)] px-6 py-2.5 text-xs font-semibold text-white smooth-interactive active:scale-95 cursor-pointer disabled:opacity-50">
+                          {smtpBusy ? "正在保存配置..." : "保存天数策略"}
+                        </button>
+                        <button type="button" disabled={smtpBusy || cleanupBusy} onClick={triggerManualCleanup} className="rounded-full border border-red-200 bg-red-50/50 px-6 py-2.5 text-xs font-semibold text-red-600 smooth-interactive hover:bg-red-100 disabled:opacity-50 cursor-pointer flex items-center gap-1.5">
+                          {cleanupBusy ? (
+                            <>
+                              <svg className="animate-spin h-3.5 w-3.5 text-red-600" fill="none" viewBox="0 0 24 24">
+                                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                              </svg>
+                              正在强力清理中...
+                            </>
+                          ) : "🧹 立即清理历史数据"}
+                        </button>
+                      </div>
+                      {cleanupNotice && (
+                        <div className="rounded-[1.2rem] border border-green-200/50 bg-green-50/70 p-4 text-sm text-green-950 backdrop-blur-xl flex items-center justify-between gap-3 animate-pulse">
+                          <span className="font-semibold">✨ {cleanupNotice}</span>
+                          <button type="button" onClick={() => setCleanupNotice(null)} className="text-green-600 hover:text-green-800 font-semibold select-none cursor-pointer">✕</button>
+                        </div>
+                      )}
+                    </div>
+                  </Panel>
+
                   {/* 面板 2：订阅健康看板 */}
                   <Panel title="📊 订阅投递健康监控" body="实时追踪邮件送达率与用户反馈噪音比，帮助您评估情报分发的质量。">
                     <NotificationHealthDashboard />
@@ -1185,10 +1230,15 @@ export default function App() {
                           </div>
 
                           {newRuleForm.deliveryFrequency !== "instant" && (
-                            <Field label="定时发送时间" description="支持多个时间点，英文逗号分隔，例如 '09:00, 18:00'">
-                              <input value={newRuleForm.deliveryTime ?? ""} onChange={(e) => setNewRuleForm((c) => c ? { ...c, deliveryTime: e.target.value || null } : c)} placeholder="09:00" />
-                            </Field>
-                          )}
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                               <Field label="定时发送时间" description="支持多个时间点，英文逗号分隔，例如 '09:00, 18:00'">
+                                 <input value={newRuleForm.deliveryTime ?? ""} onChange={(e) => setNewRuleForm((c) => c ? { ...c, deliveryTime: e.target.value || null } : c)} placeholder="09:00" />
+                               </Field>
+                               <Field label="简报提前预抓取（分钟）" description="在发送前提前多少分钟启动对关联源的最新数据抓取。">
+                                 <input type="number" min="0" max="1440" value={newRuleForm.prefetchMinutes ?? 0} onChange={(e) => setNewRuleForm((c) => c ? { ...c, prefetchMinutes: e.target.value ? Number(e.target.value) : 0 } : c)} placeholder="10" />
+                               </Field>
+                             </div>
+                           )}
 
                           <Field label="限定监控源" description="不勾选表示匹配全网所有监控任务">
                             <div className="flex flex-wrap gap-2">
@@ -1309,11 +1359,16 @@ export default function App() {
                                     </div>
 
                                     {/* 定时时间 */}
-                                    {editingRuleForm.deliveryFrequency !== "instant" && (
-                                      <Field label="定时发送时间点" description="支持配置多个，英文逗号分隔，例如 '09:00, 18:00'">
-                                        <input value={editingRuleForm.deliveryTime ?? ""} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, deliveryTime: e.target.value || null } : c)} />
-                                      </Field>
-                                    )}
+                                     {editingRuleForm.deliveryFrequency !== "instant" && (
+                                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                         <Field label="定时发送时间点" description="支持配置多个，英文逗号分隔，例如 '09:00, 18:00'">
+                                           <input value={editingRuleForm.deliveryTime ?? ""} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, deliveryTime: e.target.value || null } : c)} />
+                                         </Field>
+                                         <Field label="简报提前预抓取（分钟）" description="在发送前提前多少分钟启动对关联源的最新数据抓取。">
+                                           <input type="number" min="0" max="1440" value={editingRuleForm.prefetchMinutes ?? 0} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, prefetchMinutes: e.target.value ? Number(e.target.value) : 0 } : c)} placeholder="10" />
+                                         </Field>
+                                       </div>
+                                     )}
 
                                     {/* 监控任务多选 */}
                                     <Field label="限定监控源" description="不勾选默认匹配全网所有监控任务产生的情报">
@@ -1495,6 +1550,7 @@ export default function App() {
                                             minScore: rule.minScore,
                                             minTrustScore: rule.minTrustScore,
                                             minSupportingSources: rule.minSupportingSources,
+                                            prefetchMinutes: rule.prefetchMinutes,
                                             deliveryFrequency: rule.deliveryFrequency,
                                             deliveryTime: rule.deliveryTime,
                                             recipients: rule.recipients,

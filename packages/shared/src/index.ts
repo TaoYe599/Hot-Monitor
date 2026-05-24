@@ -1,4 +1,3 @@
-export type MonitorMode = "keyword" | "topic";
 
 export type SourceKind =
   | "twitter"
@@ -30,14 +29,12 @@ export interface MonitorSourceConfig {
 export interface MonitorRecord {
   id: number;
   name: string;
-  mode: MonitorMode;
   query: string;
   description: string | null;
   intervalMinutes: number;
   cooldownMinutes: number;
   enabled: boolean;
   sources: MonitorSourceConfig;
-  notifyChannels: NotificationChannel[];
   createdAt: string;
   updatedAt: string;
   lastRunAt: string | null;
@@ -166,6 +163,8 @@ export interface SettingsRecord {
   smtpUser: string | null;
   smtpPassword: string | null;
   smtpFrom: string | null;
+  eventRetentionDays: number;
+  hotspotRetentionDays: number;
   updatedAt: string;
 }
 
@@ -182,6 +181,7 @@ export interface SubscriptionRuleRecord {
   minSupportingSources: number;
   deliveryFrequency: "instant" | "daily" | "weekly";
   deliveryTime: string | null;
+  prefetchMinutes: number | null;
   recipients: string[];
   lastDispatchedAt: string | null;
   createdAt: string;
@@ -200,6 +200,7 @@ export interface SubscriptionRuleInput {
   minSupportingSources: number;
   deliveryFrequency: "instant" | "daily" | "weekly";
   deliveryTime: string | null;
+  prefetchMinutes: number | null;
   recipients: string[];
 }
 
@@ -235,7 +236,7 @@ export interface DashboardSnapshot {
 
 
 export interface VerifyKeywordInput {
-  monitor: Pick<MonitorRecord, "name" | "query" | "mode">;
+  monitor: Pick<MonitorRecord, "name" | "query">;
   candidate: SourceItem;
 }
 
@@ -252,7 +253,7 @@ export interface VerifyKeywordOutput {
 }
 
 export interface HotspotClusterInput {
-  monitor: Pick<MonitorRecord, "name" | "query" | "mode">;
+  monitor: Pick<MonitorRecord, "name" | "query">;
   candidates: SourceItem[];
   reason?: string;
 }
@@ -273,14 +274,12 @@ export interface HotspotClusterOutput {
 
 export interface MonitorFormInput {
   name: string;
-  mode: MonitorMode;
   query: string;
   description?: string;
   intervalMinutes: number;
   cooldownMinutes: number;
   enabled: boolean;
   sources: MonitorSourceConfig;
-  notifyChannels: NotificationChannel[];
 }
 
 export interface SettingsFormInput {
@@ -291,6 +290,8 @@ export interface SettingsFormInput {
   smtpUser: string | null;
   smtpPassword: string | null;
   smtpFrom: string | null;
+  eventRetentionDays: number;
+  hotspotRetentionDays: number;
 }
 
 export interface ScanSummary {
@@ -331,7 +332,6 @@ export const DEFAULT_SOURCE_CONFIG: MonitorSourceConfig = {
   reddit: true,
 };
 
-export const DEFAULT_NOTIFICATION_CHANNELS: NotificationChannel[] = ["email"];
 
 // ============== 排序和筛选类型 ==============
 

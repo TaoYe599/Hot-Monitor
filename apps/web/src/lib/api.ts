@@ -9,6 +9,7 @@ import type {
   ScanJobRecord,
   SettingsFormInput,
   SettingsRecord,
+  NotificationStats,
   SubscriptionRuleRecord,
   SubscriptionRuleInput,
 } from "@hot-monitor/shared";
@@ -208,6 +209,15 @@ export const api = {
     return request<{ ok: boolean }>(`/api/subscriptions/${id}/test-notification`, {
       method: "POST",
       body: JSON.stringify({}),
+    });
+  },
+  getNotificationStats(): Promise<NotificationStats> {
+    return request<NotificationStats>("/api/notifications/stats");
+  },
+  cleanupSettings(body: { eventRetentionDays?: number; hotspotRetentionDays?: number } = {}) {
+    return request<{ ok: boolean; deletedEvents: number; deletedHotspots: number }>("/api/settings/cleanup", {
+      method: "POST",
+      body: JSON.stringify(body),
     });
   },
 };

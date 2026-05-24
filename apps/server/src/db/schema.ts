@@ -15,7 +15,6 @@ import {
 export const monitorsTable = sqliteTable("monitors", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
-  mode: text("mode").notNull(),
   query: text("query").notNull(),
   description: text("description"),
   intervalMinutes: integer("interval_minutes").notNull(),
@@ -23,9 +22,6 @@ export const monitorsTable = sqliteTable("monitors", {
   enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
   sources: text("sources", { mode: "json" })
     .$type<MonitorSourceConfig>()
-    .notNull(),
-  notifyChannels: text("notify_channels", { mode: "json" })
-    .$type<NotificationChannel[]>()
     .notNull(),
   createdAt: text("created_at").notNull(),
   updatedAt: text("updated_at").notNull(),
@@ -104,6 +100,8 @@ export const settingsTable = sqliteTable("settings", {
   smtpUser: text("smtp_user"),
   smtpPassword: text("smtp_password"),
   smtpFrom: text("smtp_from"),
+  eventRetentionDays: integer("event_retention_days").notNull().default(30),
+  hotspotRetentionDays: integer("hotspot_retention_days").notNull().default(90),
   updatedAt: text("updated_at").notNull(),
 });
 
@@ -130,6 +128,7 @@ export const subscriptionRulesTable = sqliteTable("subscription_rules", {
   minSupportingSources: integer("min_supporting_sources").notNull().default(1),
   deliveryFrequency: text("delivery_frequency").notNull().default("instant"), // "instant" | "daily" | "weekly"
   deliveryTime: text("delivery_time"), // 例如 "09:00"
+  prefetchMinutes: integer("prefetch_minutes"), // 例如 10
   recipients: text("recipients", { mode: "json" }).$type<string[]>().notNull(),
   lastDispatchedAt: text("last_dispatched_at"),
   createdAt: text("created_at").notNull(),

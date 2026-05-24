@@ -214,12 +214,23 @@ function scoreDomainTrust(url: string, baseTrust = 0.5): number {
   }
 }
 
+/**
+ * 基于各个平台的 90% 百分位基准，计算归一化的互动分 (0.0 - 1.0)
+ * 采用 Math.min(1.0, (value / baseline) * 0.9) 的方式映射，确保在该平台上排名前 10% 的内容能够达到 0.9 左右，极高热度可达 1.0。
+ */
+function normalizePlatformEngagement(value: number, baseline: number): number {
+  if (value <= 0) return 0.1;
+  return Number(Math.min(1.0, (value / baseline) * 0.9).toFixed(3));
+}
+
 function estimateEngagement(sourceKind: SourceKind, raw: Record<string, unknown>): number {
   if (sourceKind === "twitter") {
-    const likeCount = Number(raw.likeCount ?? 0);
-    const retweetCount = Number(raw.retweetCount ?? 0);
-    const viewCount = Number(raw.viewCount ?? 0);
-    return Math.min(1, ((likeCount * 0.0025) + (retweetCount * 0.01) + (viewCount * 0.00002)));
+    const likeCount = Number(raw.likeCount ?? raw.like_count ?? raw.likes ?? 0);
+    const retweetCount = Number(raw.retweetCount ?? raw.retweet_count ?? raw.retweets ?? 0);
+    // Twitter 综合互动值：以点赞为主，转发和评论按权重折算
+    const totalEngagement = likeCount + retweetCount * 3;
+    // 基准线设定为 1000 (代表典型高热度帖子的点赞/转发综合互动度)
+    return normalizePlatformEngagement(totalEngagement, 1000);
   }
 
   return 0.35;
@@ -589,7 +600,7 @@ async function collectHackerNews(monitor: MonitorRecord): Promise<SourceItem[]> 
             author: hit.author ?? null,
             excerpt: compactText(hit._highlightResult?.title?.value ?? hit.title ?? "", 220),
             content: compactText(hit.title ?? "", 800),
-            engagementScore: Math.min(1, ((hit.points ?? 0) * 0.001) + ((hit.num_comments ?? 0) * 0.002)),
+            engagementScore: normalizePlatformEngagement((hit.points ?? 0) + (hit.num_comments ?? 0) * 2, 150),
             trustScore: scoreDomainTrust(hit.url, 0.88),
             tags: [],
             raw: hit as unknown as Record<string, unknown>,
@@ -663,7 +674,7 @@ async function collectZhihu(monitor: MonitorRecord): Promise<SourceItem[]> {
             author: null,
             excerpt: compactText(excerpt, 220),
             content: compactText(excerpt, 1000),
-            engagementScore: Math.min(1, ((item.vote_count ?? 0) * 0.001) + ((item.comment_count ?? 0) * 0.002)),
+            engagementScore: normalizePlatformEngagement((item.vote_count ?? 0) + (item.comment_count ?? 0) * 3, 300),
             trustScore: scoreDomainTrust("zhihu.com", 0.8),
             tags: [],
             raw: item as unknown as Record<string, unknown>,
@@ -874,7 +885,7 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
           author: p.author ?? null,
           excerpt: compactText(p.selftext ?? p.title, 220),
           content: compactText(p.selftext ?? p.title, 1000),
-          engagementScore: Math.min(1, ((score * 0.0008) + (numComments * 0.002))),
+          engagementScore: normalizePlatformEngagement(score + numComments * 3, 200),
           trustScore: score >= 100 ? 0.85 : score >= 50 ? 0.78 : 0.7,
           tags: p.link_flair_text ? [p.link_flair_text] : [],
           raw: p as unknown as Record<string, unknown>,
@@ -944,7 +955,7 @@ async function collectReddit(monitor: MonitorRecord): Promise<SourceItem[]> {
           author: p.author ?? null,
           excerpt: compactText(p.selftext ?? p.title, 220),
           content: compactText(p.selftext ?? p.title, 1000),
-          engagementScore: Math.min(1, ((score * 0.0008) + (numComments * 0.002))),
+          engagementScore: normalizePlatformEngagement(score + numComments * 3, 200),
           trustScore: score >= 100 ? 0.85 : score >= 50 ? 0.78 : 0.7,
           tags: p.link_flair_text ? [p.link_flair_text] : [],
           raw: p as unknown as Record<string, unknown>,

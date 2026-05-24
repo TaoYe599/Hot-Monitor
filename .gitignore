@@ -5,7 +5,6 @@ coverage
 playwright-report
 test-results
 apps/server/data
-apps/server/drizzle
 apps/server/tmp
 .env
 .env.local

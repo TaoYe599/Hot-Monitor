@@ -7,14 +7,12 @@ const statements = [
   `CREATE TABLE IF NOT EXISTS monitors (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
-      mode TEXT NOT NULL,
       query TEXT NOT NULL,
       description TEXT,
       interval_minutes INTEGER NOT NULL,
       cooldown_minutes INTEGER NOT NULL,
       enabled INTEGER NOT NULL DEFAULT 1,
       sources TEXT NOT NULL,
-      notify_channels TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       last_run_at TEXT
@@ -48,11 +46,11 @@ const statements = [
       engagement_score REAL NOT NULL,
       status TEXT NOT NULL,
       supporting_urls TEXT NOT NULL,
+      is_heuristic INTEGER NOT NULL DEFAULT 0,
       created_at TEXT NOT NULL
     )`,
   `CREATE TABLE IF NOT EXISTS settings (
       id INTEGER PRIMARY KEY,
-      webhook_urls TEXT NOT NULL,
       email_to TEXT NOT NULL,
       smtp_host TEXT,
       smtp_port INTEGER,
@@ -60,9 +58,8 @@ const statements = [
       smtp_user TEXT,
       smtp_password TEXT,
       smtp_from TEXT,
-      vapid_public_key TEXT,
-      vapid_private_key TEXT,
-      vapid_subject TEXT,
+      event_retention_days INTEGER NOT NULL DEFAULT 30,
+      hotspot_retention_days INTEGER NOT NULL DEFAULT 90,
       updated_at TEXT NOT NULL
     )`,
   `CREATE TABLE IF NOT EXISTS push_subscriptions (
@@ -95,6 +92,7 @@ const statements = [
       min_supporting_sources INTEGER NOT NULL DEFAULT 1,
       delivery_frequency TEXT NOT NULL DEFAULT 'instant',
       delivery_time TEXT,
+      prefetch_minutes INTEGER,
       recipients TEXT NOT NULL,
       last_dispatched_at TEXT,
       created_at TEXT NOT NULL,
@@ -168,6 +166,7 @@ export async function migrateDatabase(client: Client): Promise<void> {
     { name: "engagement_aggregates", sql: "ALTER TABLE hotspots ADD COLUMN engagement_aggregates TEXT" },
     { name: "earliest_published_at", sql: "ALTER TABLE hotspots ADD COLUMN earliest_published_at TEXT" },
     { name: "latest_published_at", sql: "ALTER TABLE hotspots ADD COLUMN latest_published_at TEXT" },
+    { name: "is_heuristic", sql: "ALTER TABLE hotspots ADD COLUMN is_heuristic INTEGER NOT NULL DEFAULT 0" },
   ];
 
   for (const col of hotspotColumns) {
@@ -180,6 +179,51 @@ export async function migrateDatabase(client: Client): Promise<void> {
       }
     } catch (err) {
       console.warn(`[migration] Failed to add column ${col.name}: ${err}`);
+    }
+  }
+
+  // Migration: Add new columns to settings table
+  const settingsColumns = [
+    { name: "event_retention_days", sql: "ALTER TABLE settings ADD COLUMN event_retention_days INTEGER NOT NULL DEFAULT 30" },
+    { name: "hotspot_retention_days", sql: "ALTER TABLE settings ADD COLUMN hotspot_retention_days INTEGER NOT NULL DEFAULT 90" },
+  ];
+  for (const col of settingsColumns) {
+    try {
+      const existing = await client.execute(`PRAGMA table_info(settings)`);
+      const hasColumn = existing.rows?.some((row: Record<string, unknown>) => row.name === col.name);
+      if (!hasColumn) {
+        await client.execute(col.sql);
+        console.info(`[migration] Added column ${col.name} to settings table`);
+      }
+    } catch (err) {
+      console.warn(`[migration] Failed to add column ${col.name}: ${err}`);
+    }
+  }
+
+  // Migration: Add new columns to subscription_rules table
+  try {
+    const existing = await client.execute(`PRAGMA table_info(subscription_rules)`);
+    const hasColumn = existing.rows?.some((row: Record<string, unknown>) => row.name === "prefetch_minutes");
+    if (!hasColumn) {
+      await client.execute("ALTER TABLE subscription_rules ADD COLUMN prefetch_minutes INTEGER");
+      console.info(`[migration] Added column prefetch_minutes to subscription_rules table`);
+    }
+  } catch (err) {
+    console.warn(`[migration] Failed to add column prefetch_minutes: ${err}`);
+  }
+
+  // Migration: Drop removed columns from monitors table
+  const dropMonitorColumns = ["mode", "notify_channels"];
+  for (const col of dropMonitorColumns) {
+    try {
+      const existing = await client.execute(`PRAGMA table_info(monitors)`);
+      const hasColumn = existing.rows?.some((row: Record<string, unknown>) => row.name === col);
+      if (hasColumn) {
+        await client.execute(`ALTER TABLE monitors DROP COLUMN ${col}`);
+        console.info(`[migration] Dropped column ${col} from monitors table`);
+      }
+    } catch (err) {
+      console.warn(`[migration] Failed to drop column ${col} from monitors: ${err}`);
     }
   }
 }

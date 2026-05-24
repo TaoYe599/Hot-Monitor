@@ -122,12 +122,12 @@ export function keywordDensityWithExpansion(
 }
 
 export function generateQueryVariants(
-  monitor: Pick<MonitorRecord, "query" | "mode">,
+  monitor: Pick<MonitorRecord, "query">,
 ): string[] {
   const original = monitor.query.trim();
   const variants = new Set<string>([original]);
 
-  if (monitor.mode === "keyword" || !original) {
+  if (!original) {
     return Array.from(variants);
   }
 
@@ -158,13 +158,9 @@ export function includesQuery(query: string, text: string): boolean {
 }
 
 export function matchesMonitorQuery(
-  monitor: Pick<MonitorRecord, "query" | "mode">,
+  monitor: Pick<MonitorRecord, "query">,
   text: string,
 ): boolean {
-  if (monitor.mode === "keyword") {
-    return includesQuery(monitor.query, text);
-  }
-
   return generateQueryVariants(monitor).some(
     (variant) => keywordDensity(variant, text) >= 0.25,
   );
@@ -248,7 +244,7 @@ export function computeFreshnessScore(publishedAt: string | null): number {
 }
 
 export function scoreCandidateForMonitor(
-  monitor: Pick<MonitorRecord, "query" | "mode">,
+  monitor: Pick<MonitorRecord, "query">,
   item: SourceItem,
 ): number {
   const density = keywordDensity(monitor.query, `${item.title}\n${item.excerpt}\n${item.content}`);

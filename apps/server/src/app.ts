@@ -1,9 +1,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import type { MonitorFormInput, NotificationChannel, SettingsFormInput, SubscriptionRuleInput } from "@hot-monitor/shared";
+import type { MonitorFormInput, SettingsFormInput, SubscriptionRuleInput } from "@hot-monitor/shared";
 import {
-  DEFAULT_NOTIFICATION_CHANNELS,
   DEFAULT_SOURCE_CONFIG,
 } from "@hot-monitor/shared";
 import cors from "@fastify/cors";
@@ -25,7 +24,6 @@ import { SourceService } from "./services/sources.js";
 
 const monitorFormSchema = z.object({
   name: z.string().min(2),
-  mode: z.enum(["keyword", "topic"]),
   query: z.string().min(2),
   description: z.string().optional(),
   intervalMinutes: z.number().int().min(5).max(24 * 60),
@@ -44,10 +42,6 @@ const monitorFormSchema = z.object({
       reddit: z.boolean().default(true),
     })
     .default(DEFAULT_SOURCE_CONFIG),
-  notifyChannels: z
-    .array(z.enum(["email"]))
-    .min(1)
-    .default(DEFAULT_NOTIFICATION_CHANNELS),
 });
 
 const settingsFormSchema = z.object({
@@ -58,6 +52,8 @@ const settingsFormSchema = z.object({
   smtpUser: z.string().nullable(),
   smtpPassword: z.string().nullable(),
   smtpFrom: z.string().email().nullable(),
+  eventRetentionDays: z.number().int().min(1).default(30),
+  hotspotRetentionDays: z.number().int().min(1).default(90),
 });
 
 const subscriptionRuleFormSchema = z.object({
@@ -72,6 +68,7 @@ const subscriptionRuleFormSchema = z.object({
   minSupportingSources: z.number().int().min(1).default(1),
   deliveryFrequency: z.enum(["instant", "daily", "weekly"]).default("instant"),
   deliveryTime: z.string().nullable().default(null),
+  prefetchMinutes: z.number().int().min(0).max(1440).nullable().default(null),
   recipients: z.array(z.string().email()).min(1),
 });
 
@@ -241,6 +238,23 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return repository.updateSettings(body);
   });
 
+  const cleanupSchema = z.object({
+    eventRetentionDays: z.number().int().min(0).optional(),
+    hotspotRetentionDays: z.number().int().min(0).optional(),
+  });
+
+  app.post("/api/settings/cleanup", async (request) => {
+    const settings = await repository.getSettings();
+    const body = cleanupSchema.parse(request.body || {});
+    const eventDays = body.eventRetentionDays ?? settings.eventRetentionDays;
+    const hotspotDays = body.hotspotRetentionDays ?? settings.hotspotRetentionDays;
+    const result = await repository.cleanupOldData(eventDays, hotspotDays);
+    return {
+      ok: true,
+      ...result,
+    };
+  });
+
   // =========================================================================
   // 智能订阅通知规则 & 闭环反馈 API 挂载
   // =========================================================================
@@ -375,14 +389,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
     return reply.send(stats);
   });
 
-  app.post("/api/settings/test-notification", async (request) => {
-    const body = z
-      .object({
-        channels: z.array(z.enum(["email"])).default(["email"]),
-      })
-      .parse(request.body) as { channels: NotificationChannel[] };
-
-    await notificationService.sendTestNotification(body.channels);
+  app.post("/api/settings/test-notification", async () => {
+    await notificationService.sendTestNotification(["email"]);
     return { ok: true };
   });
 
