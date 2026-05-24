@@ -11,6 +11,11 @@ const service = new AiService({
   port: 8787,
   publicUrl: "http://localhost:8787",
   databasePath: ":memory:",
+  thresholds: {
+    preFilter: 0.2,
+    relevance: 0.4,
+    authenticity: 0.35,
+  },
 });
 
 describe("AiService fallback mode", () => {

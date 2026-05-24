@@ -190,6 +190,7 @@ export class ScanRunner {
 
         const existing = await this.repository.getExistingEvent(monitor.id, candidate.url);
         if (existing) {
+          candidate.existingEvent = existing;
           continue;
         }
 
@@ -226,6 +227,7 @@ export class ScanRunner {
         });
 
         acceptedEvents.push(created);
+        candidate.existingEvent = created;
         this.bus.publish({
           type: "event.created",
           createdAt: nowIso(),
@@ -248,6 +250,7 @@ export class ScanRunner {
 
         const existing = await this.repository.getExistingEvent(monitor.id, candidate.url);
         if (existing) {
+          candidate.existingEvent = existing;
           continue;
         }
 
@@ -284,6 +287,7 @@ export class ScanRunner {
         });
 
         acceptedEvents.push(created);
+        candidate.existingEvent = created;
         this.bus.publish({
           type: "event.created",
           createdAt: nowIso(),
@@ -351,12 +355,10 @@ export class ScanRunner {
           payload: created,
         });
 
-        if (cluster.shouldNotify) {
-          await this.notificationService.notifyHotspot(created, {
-            name: monitor.name,
-            notifyChannels: monitor.notifyChannels,
-          });
-        }
+        await this.notificationService.notifyHotspot(created, {
+          name: monitor.name,
+          notifyChannels: monitor.notifyChannels,
+        });
       }
     }
 
