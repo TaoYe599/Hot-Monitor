@@ -303,6 +303,11 @@ const createAiService = (): AiService => {
     port: 8787,
     publicUrl: "http://localhost:8787",
     databasePath: ":memory:",
+    thresholds: {
+      preFilter: 0.1,
+      relevance: 0.3,
+      authenticity: 0.3,
+    }
   };
   return new AiService(config);
 };

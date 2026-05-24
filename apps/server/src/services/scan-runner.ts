@@ -207,6 +207,8 @@ export class ScanRunner {
 
         const existing = await this.repository.getExistingEvent(monitor.id, candidate.url);
         if (existing) {
+          // 已存在事件时强力回填绑定 ID，确保历史数据再次参与聚类时仍能正确关联
+          candidate.existingEvent = { id: existing.id };
           continue;
         }
 
@@ -241,6 +243,9 @@ export class ScanRunner {
           engagementDetails: candidate.engagementDetails ?? null,
           isRead: false,
         });
+
+        // 强力回填挂载新生成的事件物理主键，打通与热点聚类 cluster_id 的关联通道，修复断联 Bug
+        candidate.existingEvent = { id: created.id };
 
         acceptedEvents.push(created);
         this.bus.publish({
