@@ -340,11 +340,14 @@ export class NotificationService {
     settings: SettingsRecord,
     isEvolution = false,
   ): Promise<void> {
+    const heuristicPrefix = hotspot.isHeuristic ? "[Heuristic] " : "";
     const subject = isEvolution
-      ? `[🚨 追加演进] Hot Monitor 实时情报: ${hotspot.label} (${Math.round(hotspot.score * 100)}%)`
-      : `[⚡ 实时预警] Hot Monitor 重大发现: ${hotspot.label} (${Math.round(hotspot.score * 100)}%)`;
+      ? `[🚨 追加演进] ${heuristicPrefix}Hot Monitor 实时情报: ${hotspot.label} (${Math.round(hotspot.score * 100)}%)`
+      : `[⚡ 实时预警] ${heuristicPrefix}Hot Monitor 重大发现: ${hotspot.label} (${Math.round(hotspot.score * 100)}%)`;
 
-    const htmlContent = this.renderInstantAlertEmail(hotspot, rule, isEvolution);
+    // 获取关联事件以渲染真实可信度数据
+    const events = await this.repository.getEventsByClusterId(hotspot.id);
+    const htmlContent = this.renderInstantAlertEmail(hotspot, rule, isEvolution, events);
 
     await this.sendCustomEmail(
       rule.recipients,
@@ -383,11 +386,39 @@ export class NotificationService {
         "https://openai.com/news/deepseek-v4-collaborative",
         "https://github.com/deepseek-ai/DeepSeek-V2",
       ],
+      isHeuristic: false,
       createdAt: new Date().toISOString(),
     };
 
     const subject = `[⚡ 规则测试] Hot Monitor 发信正常: ${rule.name}`;
-    const htmlContent = this.renderInstantAlertEmail(mockHotspot, rule, false);
+    // 测试邮件使用模拟的 mock 事件数据
+    const mockEvents: import("@hot-monitor/shared").HotspotEventSummary[] = [
+      {
+        id: 1,
+        title: "DeepSeek-v4 架构白皮书正式开源",
+        sourceUrl: "https://openai.com/news/deepseek-v4-collaborative",
+        sourceType: "rss",
+        sourceLabel: "官方博客",
+        author: null,
+        publishedAt: null,
+        authenticityScore: 0.95,
+        relevanceScore: 0.9,
+        engagementDetails: null,
+      },
+      {
+        id: 2,
+        title: "DeepSeek-V2 GitHub Repo",
+        sourceUrl: "https://github.com/deepseek-ai/DeepSeek-V2",
+        sourceType: "github",
+        sourceLabel: "GitHub",
+        author: null,
+        publishedAt: null,
+        authenticityScore: 0.88,
+        relevanceScore: 0.85,
+        engagementDetails: null,
+      },
+    ];
+    const htmlContent = this.renderInstantAlertEmail(mockHotspot, rule, false, mockEvents);
 
     await this.sendCustomEmail(
       rule.recipients,
@@ -409,15 +440,52 @@ export class NotificationService {
     hotspot: HotspotCluster,
     rule: SubscriptionRuleRecord,
     isEvolution = false,
+    events: import("@hot-monitor/shared").HotspotEventSummary[] = [],
   ): string {
     const feedbackBaseUrl = this.config.publicUrl || "http://127.0.0.1:8787";
     const settingsUrl = `${feedbackBaseUrl}/settings`;
     const yesFeedback = `${feedbackBaseUrl}/api/feedback?hotspotId=${hotspot.id}&ruleId=${rule.id}&verdict=relevant`;
     const noFeedback = `${feedbackBaseUrl}/api/feedback?hotspotId=${hotspot.id}&ruleId=${rule.id}&verdict=irrelevant`;
+    const wrongCategoryFeedback = `${feedbackBaseUrl}/api/feedback?hotspotId=${hotspot.id}&ruleId=${rule.id}&verdict=wrong_category`;
+    const highScoreFeedback = `${feedbackBaseUrl}/api/feedback?hotspotId=${hotspot.id}&ruleId=${rule.id}&verdict=score_too_high`;
 
     const scorePct = Math.round(hotspot.score * 100);
     const freshPct = Math.round(hotspot.freshnessScore * 100);
     const engagePct = Math.round(hotspot.engagementScore * 100);
+
+    // 构建事件 URL 映射用于显示真实信任分
+    const eventByUrl = new Map(events.map((e) => [e.sourceUrl, e]));
+
+    // 信源列表渲染（使用真实可信度数据）
+    const sourceRows = hotspot.supportingUrls.map((url, idx) => {
+      const hostname = url.replace(/https?:\/\/(www\.)?/, "").split("/")[0];
+      const event = eventByUrl.get(url);
+      // 优先使用事件中的真实信任分，否则使用基于 URL 的启发式估算
+      const trustScore = event ? Math.round(event.authenticityScore * 100) / 100 : (idx === 0 ? 0.95 : 0.88);
+      const isOfficial = trustScore >= 0.9;
+      const trustTag = isOfficial ? "官方权威" : event ? "技术社区" : "高分技术社区";
+      const sourceLabel = event?.sourceLabel || "";
+
+      return `
+                  <tr>
+                    <td style="padding: 12px 16px; font-size: 13px; color: #475569; border-bottom: ${idx === hotspot.supportingUrls.length - 1 ? "none" : "1px solid rgba(8,17,31,0.06)"};">
+                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
+                        <tr>
+                          <td>
+                            <a href="${url}" target="_blank" style="color: #08111f; font-weight: 600; text-decoration: none;">${hostname}</a>
+                            ${sourceLabel ? `<span style="font-size: 10px; color: #64748b; margin-left: 6px;">[${sourceLabel}]</span>` : ""}
+                            <span style="font-size: 10px; font-weight: 600; color: ${isOfficial ? "#10b981" : "#f59e0b"}; background-color: ${isOfficial ? "#ecfdf5" : "#fffbeb"}; padding: 2px 6px; border-radius: 12px; margin-left: 8px;">
+                              ${trustTag} ${trustScore.toFixed(2)}
+                            </span>
+                          </td>
+                          <td align="right">
+                            <a href="${url}" target="_blank" style="color: #ef4444; font-weight: 600; text-decoration: none; font-size: 12px;">直达 &rarr;</a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>`;
+    }).join("");
 
     return `
 <!DOCTYPE html>
@@ -437,6 +505,10 @@ export class NotificationService {
           <!-- 页头 -->
           <tr>
             <td style="padding: 24px 30px; background-color: #ffffff; border-bottom: 1px solid rgba(8, 17, 31, 0.06);">
+              ${hotspot.isHeuristic ? `
+              <div style="margin-bottom: 12px; padding: 6px 12px; background-color: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; font-size: 11px; color: #92400e; font-weight: 600;">
+                ⚠️ [Heuristic 模式降级生成] 因 AI 服务临时繁忙，本条摘要由系统根据最高可信度信源段落进行启发式提取，请酌情参考。
+              </div>` : ""}
               <table width="100%" border="0" cellspacing="0" cellpadding="0">
                 <tr>
                   <td>
@@ -496,32 +568,7 @@ export class NotificationService {
             <td style="padding: 0 30px 30px 30px; background-color: #ffffff;">
               <h3 style="margin: 0 0 12px 0; font-size: 14px; font-weight: 700; color: #08111f; text-transform: uppercase; letter-spacing: 0.05em;">🔗 可信链路与原著</h3>
               <table width="100%" border="0" cellspacing="0" cellpadding="0" style="border-radius: 12px; border: 1px solid rgba(8, 17, 31, 0.06); background-color: #fafbfc; overflow: hidden; border-collapse: separate;">
-                ${hotspot.supportingUrls
-                  .map((url, idx) => {
-                    const hostname = url.replace(/https?:\/\/(www\.)?/, "").split("/")[0];
-                    // mock 域名可信度标签
-                    const trustScore = idx === 0 ? 0.95 : 0.88;
-                    const trustTag = trustScore >= 0.9 ? "官方权威" : "高分技术社区";
-                    return `
-                  <tr>
-                    <td style="padding: 12px 16px; font-size: 13px; color: #475569; border-bottom: ${idx === hotspot.supportingUrls.length - 1 ? "none" : "1px solid rgba(8,17,31,0.06)"};">
-                      <table width="100%" border="0" cellspacing="0" cellpadding="0">
-                        <tr>
-                          <td>
-                            <a href="${url}" target="_blank" style="color: #08111f; font-weight: 600; text-decoration: none;">${hostname}</a>
-                            <span style="font-size: 10px; font-weight: 600; color: ${trustScore >= 0.9 ? "#10b981" : "#f59e0b"}; background-color: ${trustScore >= 0.9 ? "#ecfdf5" : "#fffbeb"}; padding: 2px 6px; border-radius: 12px; margin-left: 8px;">
-                              ${trustTag} ${trustScore}
-                            </span>
-                          </td>
-                          <td align="right">
-                            <a href="${url}" target="_blank" style="color: #ef4444; font-weight: 600; text-decoration: none; font-size: 12px;">直达 &rarr;</a>
-                          </td>
-                        </tr>
-                      </table>
-                    </td>
-                  </tr>`;
-                  })
-                  .join("")}
+                ${sourceRows}
               </table>
             </td>
           </tr>
@@ -531,7 +578,10 @@ export class NotificationService {
             <td style="padding: 20px 30px; background-color: #f8fafc; border-top: 1px solid rgba(8, 17, 31, 0.05); text-align: center;">
               <span style="font-size: 12px; font-weight: 600; color: #64748b; margin-right: 12px;">此情报对您:</span>
               <a href="${yesFeedback}" target="_blank" style="display: inline-block; padding: 6px 14px; font-size: 12px; font-weight: 600; color: #10b981; border: 1px solid rgba(16,185,129,0.2); background-color: #ffffff; border-radius: 20px; text-decoration: none; margin-right: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.01);">👍 非常有用</a>
-              <a href="${noFeedback}" target="_blank" style="display: inline-block; padding: 6px 14px; font-size: 12px; font-weight: 600; color: #64748b; border: 1px solid rgba(8,17,31,0.08); background-color: #ffffff; border-radius: 20px; text-decoration: none; box-shadow: 0 2px 4px rgba(0,0,0,0.01);">👎 不太相关</a>
+              <a href="${noFeedback}" target="_blank" style="display: inline-block; padding: 6px 14px; font-size: 12px; font-weight: 600; color: #64748b; border: 1px solid rgba(8,17,31,0.08); background-color: #ffffff; border-radius: 20px; text-decoration: none; margin-right: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.01);">👎 不太相关</a>
+              <div style="margin-top: 12px; font-size: 11px; color: #94a3b8;">
+                或反馈: <a href="${wrongCategoryFeedback}" target="_blank" style="color: #64748b;">分类错误</a> · <a href="${highScoreFeedback}" target="_blank" style="color: #64748b;">分数过高</a>
+              </div>
             </td>
           </tr>
 

@@ -90,6 +90,8 @@ export const hotspotsTable = sqliteTable("hotspots", {
   earliestPublishedAt: text("earliest_published_at"),
   // 原始来源中的最新发布时间
   latestPublishedAt: text("latest_published_at"),
+  // AI 服务降级标记（Heuristic 模式生成时为 true）
+  isHeuristic: integer("is_heuristic", { mode: "boolean" }).notNull().default(false),
   createdAt: text("created_at").notNull(),
 });
 

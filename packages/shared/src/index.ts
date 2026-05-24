@@ -122,6 +122,19 @@ export interface HotspotEngagementAggregates {
   maxComments?: number;
 }
 
+export interface HotspotEventSummary {
+  id: number;
+  title: string;
+  sourceUrl: string;
+  sourceType: SourceKind;
+  sourceLabel: string;
+  author: string | null;
+  publishedAt: string | null;
+  authenticityScore: number;
+  relevanceScore: number;
+  engagementDetails?: EngagementDetails | null;
+}
+
 export interface HotspotCluster {
   id: number;
   monitorId: number;
@@ -139,21 +152,9 @@ export interface HotspotCluster {
   // 原始来源中的最早/最新发布时间
   earliestPublishedAt?: string | null;
   latestPublishedAt?: string | null;
+  // AI 服务降级标记（Heuristic 模式生成时为 true）
+  isHeuristic?: boolean;
   createdAt: string;
-}
-
-// 热点簇关联的事件摘要（轻量级展示）
-export interface HotspotEventSummary {
-  id: number;
-  title: string;
-  sourceUrl: string;
-  sourceType: SourceKind;
-  sourceLabel: string;
-  author: string | null;
-  publishedAt: string | null;
-  authenticityScore: number;
-  relevanceScore: number;
-  engagementDetails?: EngagementDetails | null;
 }
 
 export interface SettingsRecord {
@@ -200,6 +201,22 @@ export interface SubscriptionRuleInput {
   deliveryFrequency: "instant" | "daily" | "weekly";
   deliveryTime: string | null;
   recipients: string[];
+}
+
+export interface NotificationStats {
+  total: number;
+  sent: number;
+  failed: number;
+  deliveryRate: number;
+  noiseRatio: number;
+  irrelevantCount: number;
+  relevantCount: number;
+  dailyStats: {
+    date: string;
+    sent: number;
+    failed: number;
+    deliveryRate: number;
+  }[];
 }
 
 export interface DashboardSnapshot {
@@ -250,6 +267,8 @@ export interface HotspotClusterOutput {
   shouldNotify: boolean;
   reason: string;
   supportingUrls: string[];
+  // AI 服务降级标记
+  isHeuristic?: boolean;
 }
 
 export interface MonitorFormInput {

@@ -470,6 +470,8 @@ export class AiService {
       shouldNotify: candidate.trustScore >= 0.55,
       reason: "Fallback hotspot clustering based on freshness, trust, and engagement.",
       supportingUrls: [candidate.url],
+      // 标记为 Heuristic 模式生成
+      isHeuristic: true,
     }));
   }
 

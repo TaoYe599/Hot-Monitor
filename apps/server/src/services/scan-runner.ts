@@ -333,6 +333,7 @@ export class ScanRunner {
           engagementAggregates,
           earliestPublishedAt: timeRange.earliest,
           latestPublishedAt: timeRange.latest,
+          isHeuristic: cluster.isHeuristic ?? false,
           createdAt: nowIso(),
         });
 

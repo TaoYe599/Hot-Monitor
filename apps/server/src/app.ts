@@ -291,9 +291,17 @@ export async function buildApp(options: BuildAppOptions = {}) {
     const query = request.query as { hotspotId?: string; ruleId?: string; verdict?: string };
     const hotspotId = Number(query.hotspotId || 0);
     const ruleId = Number(query.ruleId || 0);
-    const verdict = query.verdict;
+    const verdict = query.verdict || "unknown";
 
-    console.info(`[体验反馈] 收到用户针对热点 ${hotspotId} (订阅规则: ${ruleId}) 的情感评估: [${verdict === "relevant" ? "有用" : "不太相关"}]`);
+    const verdictLabels: Record<string, string> = {
+      relevant: "非常有用 👍",
+      irrelevant: "不太相关 👎",
+      wrong_category: "分类错误 📂",
+      score_too_high: "分数过高 📈",
+    };
+    const verdictLabel = verdictLabels[verdict] || verdict;
+
+    console.info(`[体验反馈] 收到用户针对热点 ${hotspotId} (订阅规则: ${ruleId}) 的情感评估: [${verdictLabel}]`);
 
     reply.type("text/html").send(`
 <!DOCTYPE html>
@@ -353,12 +361,18 @@ export async function buildApp(options: BuildAppOptions = {}) {
   <div class="card">
     <div style="font-size: 40px; line-height: 1;">🛡️</div>
     <h1>感谢您的情报反馈！</h1>
-    <p>我们已收到您提交的反馈评判（评定：<b>${verdict === "relevant" ? "非常有用 👍" : "不太相关 👎"}</b>）。系统已对该事件的分类权属与关键词触发阈值进行了记录，并自动作为权重优化的输入微调大语言模型的判别倾向，逐步构建属于您私有化的精准雷达。</p>
+    <p>我们已收到您提交的反馈评判（评定：<b>${verdictLabel}</b>）。系统已对该事件的分类权属与关键词触发阈值进行了记录，并自动作为权重优化的输入微调大语言模型的判别倾向，逐步构建属于您私有化的精准雷达。</p>
     <div class="badge">AI 参数增量拟合中</div>
   </div>
 </body>
 </html>
     `);
+  });
+
+  // 订阅健康看板数据
+  app.get("/api/notifications/stats", async (request, reply) => {
+    const stats = await repository.getNotificationStats();
+    return reply.send(stats);
   });
 
   app.post("/api/settings/test-notification", async (request) => {

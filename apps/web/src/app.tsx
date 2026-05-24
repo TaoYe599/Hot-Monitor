@@ -7,6 +7,7 @@ import type {
   MonitorFormInput,
   MonitorMode,
   MonitorRecord,
+  NotificationStats,
   ScanJobRecord,
   SettingsFormInput,
   SettingsRecord,
@@ -42,6 +43,7 @@ import { EventsPanel } from "./components/EventsPanel";
 import { HotspotCard } from "./components/HotspotCard";
 import { HotspotPanel } from "./components/HotspotPanel";
 import { HotspotPagination } from "./components/HotspotPagination";
+import { NotificationHealthDashboard } from "./components/NotificationHealthDashboard";
 import { api, splitLines } from "./lib/api";
 
 const defaultMonitorForm: MonitorFormInput = {
@@ -347,6 +349,7 @@ export default function App() {
           if (!dashboard.settings) return current;
           return settingsDirty && current ? current : toSettingsForm(dashboard.settings);
         });
+        setSubRules(dashboard.subscriptionRules ?? []);
         setStatus("live");
         setError(null);
       });
@@ -1150,18 +1153,115 @@ export default function App() {
                     </form>
                   </Panel>
 
-                  {/* 面板 2：智能订阅规则 */}
+                  {/* 面板 2：订阅健康看板 */}
+                  <Panel title="📊 订阅投递健康监控" body="实时追踪邮件送达率与用户反馈噪音比，帮助您评估情报分发的质量。">
+                    <NotificationHealthDashboard />
+                  </Panel>
+
+                  {/* 面板 3：智能订阅规则 */}
                   <Panel title="智能订阅路由分流" body="在此配置多维度路由规则。系统将根据不同的关键词、热度分数闸值，将匹配的热点情报精准路由发送至指定的邮箱中。">
                     <div className="space-y-5">
-                      {/* 订阅规则列表 */}
-                      {subRules.length === 0 ? (
-                        <div className="rounded-[1.6rem] border border-dashed border-[rgba(8,17,31,0.08)] bg-white/40 p-8 text-center flex flex-col items-center justify-center">
-                          <span className="text-3xl mb-3 animate-bounce">📭</span>
-                          <p className="text-sm font-medium leading-6 text-[var(--ink-soft)] max-w-sm mb-2">
-                            还没有配置任何智能订阅路由规则。配置后系统即可自动执行情报分流。
-                          </p>
-                        </div>
+                      {/* 新建规则表单 */}
+                      {newRuleForm !== null ? (
+                        <form className="panel-card rounded-[1.6rem] bg-white/70 p-6 grid gap-5" onSubmit={createSubRule}>
+                          <div className="flex items-center justify-between">
+                            <h3 className="text-base font-semibold text-[var(--ink)]">新建订阅规则</h3>
+                            <button type="button" onClick={() => setNewRuleForm(null)} className="text-xs text-[var(--ink-soft)] hover:text-[var(--ink)] cursor-pointer">
+                              取消
+                            </button>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <Field label="规则名称">
+                              <input value={newRuleForm.name} onChange={(e) => setNewRuleForm((c) => c ? { ...c, name: e.target.value } : c)} placeholder="例如：DeepSeek 动态预警" />
+                            </Field>
+                            <Field label="发送频次">
+                              <select value={newRuleForm.deliveryFrequency} onChange={(e) => setNewRuleForm((c) => c ? { ...c, deliveryFrequency: e.target.value as any } : c)}>
+                                <option value="instant">⚡ 秒级实时预警</option>
+                                <option value="daily">📅 每日定时简报</option>
+                                <option value="weekly">📅 每周定时总结</option>
+                              </select>
+                            </Field>
+                          </div>
+
+                          {newRuleForm.deliveryFrequency !== "instant" && (
+                            <Field label="定时发送时间" description="支持多个时间点，英文逗号分隔，例如 '09:00, 18:00'">
+                              <input value={newRuleForm.deliveryTime ?? ""} onChange={(e) => setNewRuleForm((c) => c ? { ...c, deliveryTime: e.target.value || null } : c)} placeholder="09:00" />
+                            </Field>
+                          )}
+
+                          <Field label="限定监控源" description="不勾选表示匹配全网所有监控任务">
+                            <div className="flex flex-wrap gap-2">
+                              {(snapshot?.monitors ?? []).map((m) => (
+                                <label key={m.id} className="inline-flex items-center gap-1.5 rounded-full border border-[rgba(8,17,31,0.08)] bg-white/60 px-3 py-1.5 text-xs cursor-pointer hover:bg-white/80">
+                                  <input type="checkbox" checked={newRuleForm.monitorIds?.includes(m.id) ?? false}
+                                    onChange={(e) => {
+                                      setNewRuleForm((c) => {
+                                        if (!c) return c;
+                                        const ids = c.monitorIds ?? [];
+                                        return { ...c, monitorIds: e.target.checked ? [...ids, m.id] : ids.filter((id) => id !== m.id) };
+                                      });
+                                    }}
+                                  />
+                                  {m.name}
+                                </label>
+                              ))}
+                              {(snapshot?.monitors ?? []).length === 0 && <span className="text-xs text-[var(--ink-soft)]">暂无可用监控任务</span>}
+                            </div>
+                          </Field>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <Field label="包含关键词 (OR)">
+                              <textarea value={newRuleForm.includeKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, includeKeywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : c)} placeholder="DeepSeek, Llama, GPT" rows={2} className="text-xs" />
+                            </Field>
+                            <Field label="必须包含 (AND)">
+                              <textarea value={newRuleForm.andKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, andKeywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : c)} placeholder="开源, 发布" rows={2} className="text-xs" />
+                            </Field>
+                            <Field label="排除关键词 (NOT)">
+                              <textarea value={newRuleForm.excludeKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, excludeKeywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : c)} placeholder="广告, 推广" rows={2} className="text-xs" />
+                            </Field>
+                          </div>
+
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                            <Field label={`热度阈值 ≥ ${Math.round(newRuleForm.minScore * 100)}%`}>
+                              <input type="range" min="0" max="100" value={newRuleForm.minScore * 100} onChange={(e) => setNewRuleForm((c) => c ? { ...c, minScore: Number(e.target.value) / 100 } : c)} className="w-full" />
+                            </Field>
+                            <Field label={`最低信源数 ≥ ${newRuleForm.minSupportingSources}`}>
+                              <input type="range" min="1" max="10" value={newRuleForm.minSupportingSources} onChange={(e) => setNewRuleForm((c) => c ? { ...c, minSupportingSources: Number(e.target.value) } : c)} className="w-full" />
+                            </Field>
+                            <Field label={`最低可信度 ≥ ${Math.round(newRuleForm.minTrustScore * 100)}%`}>
+                              <input type="range" min="0" max="100" value={newRuleForm.minTrustScore * 100} onChange={(e) => setNewRuleForm((c) => c ? { ...c, minTrustScore: Number(e.target.value) / 100 } : c)} className="w-full" />
+                            </Field>
+                          </div>
+
+                          <Field label="接收邮箱" description="多个邮箱用英文逗号分隔">
+                            <input value={newRuleForm.recipients.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, recipients: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : c)} placeholder="tech@company.com, cto@company.com" />
+                          </Field>
+
+                          {formError && (
+                            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-xs text-red-700">{formError}</div>
+                          )}
+
+                          <div className="flex items-center gap-3">
+                            <button type="submit" disabled={formBusy} className="rounded-full bg-[var(--ember)] px-6 py-2.5 text-xs font-semibold text-white smooth-interactive active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer">
+                              {formBusy ? "创建中..." : "创建规则"}
+                            </button>
+                            <button type="button" onClick={() => setNewRuleForm(null)} className="rounded-full border border-[var(--line)] bg-white/70 px-6 py-2.5 text-xs font-semibold text-[var(--ink-soft)] cursor-pointer">
+                              取消
+                            </button>
+                          </div>
+                        </form>
                       ) : (
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs text-[var(--ink-soft)]">{subRules.length} 条订阅规则</p>
+                          <button onClick={() => setNewRuleForm({ ...defaultNewRuleForm })} className="rounded-full bg-[var(--ember)] px-5 py-2 text-xs font-semibold text-white smooth-interactive active:scale-95 cursor-pointer">
+                            + 新建规则
+                          </button>
+                        </div>
+                      )}
+
+                      {/* 订阅规则列表 */}
+                      {subRules.length > 0 && (
                         <div className="grid gap-4">
                           {subRules.map((rule) => {
                             const isEditing = editingRuleId === rule.id;
@@ -1311,10 +1411,10 @@ export default function App() {
                                             {rule.deliveryFrequency === "instant" ? "⚡ 秒级实时" : rule.deliveryFrequency === "daily" ? `📅 每日定时 (${rule.deliveryTime})` : `📅 每周定时 (${rule.deliveryTime})`}
                                           </span>
                                           <span className="mono rounded-full border border-[rgba(8,17,31,0.06)] px-2.5 py-1 text-[11px] text-[var(--ink-soft)] font-medium">
-                                            热度分 $\ge$ {Math.round(rule.minScore * 100)}%
+                                            热度分 &ge; {Math.round(rule.minScore * 100)}%
                                           </span>
                                           <span className="mono rounded-full border border-[rgba(8,17,31,0.06)] px-2.5 py-1 text-[11px] text-[var(--ink-soft)] font-medium">
-                                            信源数 $\ge$ {rule.minSupportingSources}
+                                            信源数 &ge; {rule.minSupportingSources}
                                           </span>
                                         </div>
                                         <h3 className="text-lg font-bold text-[var(--ink)] mt-2.5">{rule.name}</h3>

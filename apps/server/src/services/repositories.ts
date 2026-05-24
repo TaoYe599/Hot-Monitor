@@ -194,44 +194,42 @@ export class Repository {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
+    // 构建排序字段 - 使用原始列名避免表名前缀问题
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let orderBy: any = desc(eventsTable.createdAt);
-
+    let orderField: any;
     if (sort) {
       const { field, order } = sort;
-
+      const direction = order === "asc" ? "asc" : "desc";
       switch (field) {
         case "createdAt":
-          orderBy = order === "asc" ? eventsTable.createdAt : desc(eventsTable.createdAt);
+          orderField = direction === "asc" ? sql`created_at asc` : sql`created_at desc`;
           break;
         case "authenticityScore":
-          orderBy = order === "asc"
-            ? eventsTable.authenticityScore
-            : desc(eventsTable.authenticityScore);
+          orderField = direction === "asc" ? sql`authenticity_score asc` : sql`authenticity_score desc`;
           break;
         case "relevanceScore":
-          orderBy = order === "asc"
-            ? eventsTable.relevanceScore
-            : desc(eventsTable.relevanceScore);
+          orderField = direction === "asc" ? sql`relevance_score asc` : sql`relevance_score desc`;
           break;
         case "combinedScore":
-          orderBy = order === "asc"
-            ? sql`authenticity_score * relevance_score`
-            : desc(sql`authenticity_score * relevance_score`);
+          orderField = direction === "asc"
+            ? sql`authenticity_score * relevance_score asc`
+            : sql`authenticity_score * relevance_score desc`;
           break;
         case "sourceType":
-          orderBy = order === "asc"
-            ? eventsTable.sourceType
-            : desc(eventsTable.sourceType);
+          orderField = direction === "asc" ? sql`source_type asc` : sql`source_type desc`;
           break;
+        default:
+          orderField = sql`created_at desc`;
       }
+    } else {
+      orderField = sql`created_at desc`;
     }
 
     const result = await this.db
       .select()
       .from(eventsTable)
       .where(whereClause)
-      .orderBy(orderBy)
+      .orderBy(orderField)
       .limit(limit);
 
     return result.map((event) => this.asVerifiedEvent(event));
@@ -290,44 +288,6 @@ export class Repository {
 
     const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let orderBy: any = desc(hotspotsTable.createdAt);
-
-    if (sort) {
-      const { field, order } = sort;
-
-      switch (field) {
-        case "createdAt":
-          orderBy = order === "asc" ? hotspotsTable.createdAt : desc(hotspotsTable.createdAt);
-          break;
-        case "score":
-          orderBy = order === "asc"
-            ? hotspotsTable.score
-            : desc(hotspotsTable.score);
-          break;
-        case "diversityScore":
-          orderBy = order === "asc"
-            ? hotspotsTable.diversityScore
-            : desc(hotspotsTable.diversityScore);
-          break;
-        case "freshnessScore":
-          orderBy = order === "asc"
-            ? hotspotsTable.freshnessScore
-            : desc(hotspotsTable.freshnessScore);
-          break;
-        case "engagementScore":
-          orderBy = order === "asc"
-            ? hotspotsTable.engagementScore
-            : desc(hotspotsTable.engagementScore);
-          break;
-        case "coverage":
-          orderBy = order === "asc"
-            ? sql`json_array_length(supporting_urls)`
-            : desc(sql`json_array_length(supporting_urls)`);
-          break;
-      }
-    }
-
     // Get total count
     const countResult = await this.db
       .select({ count: sql<number>`count(*)` })
@@ -335,11 +295,45 @@ export class Repository {
       .where(whereClause);
     const total = Number(countResult[0]?.count ?? 0);
 
+    // 构建排序字段 - 使用原始列名避免表名前缀问题
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let orderField: any;
+    if (sort) {
+      const { field, order } = sort;
+      const direction = order === "asc" ? "asc" : "desc";
+      switch (field) {
+        case "createdAt":
+          orderField = direction === "asc" ? sql`created_at asc` : sql`created_at desc`;
+          break;
+        case "score":
+          orderField = direction === "asc" ? sql`score asc` : sql`score desc`;
+          break;
+        case "diversityScore":
+          orderField = direction === "asc" ? sql`diversity_score asc` : sql`diversity_score desc`;
+          break;
+        case "freshnessScore":
+          orderField = direction === "asc" ? sql`freshness_score asc` : sql`freshness_score desc`;
+          break;
+        case "engagementScore":
+          orderField = direction === "asc" ? sql`engagement_score asc` : sql`engagement_score desc`;
+          break;
+        case "coverage":
+          orderField = direction === "asc"
+            ? sql`json_array_length(supporting_urls) asc`
+            : sql`json_array_length(supporting_urls) desc`;
+          break;
+        default:
+          orderField = sql`created_at desc`;
+      }
+    } else {
+      orderField = sql`created_at desc`;
+    }
+
     const result = await this.db
       .select()
       .from(hotspotsTable)
       .where(whereClause)
-      .orderBy(orderBy)
+      .orderBy(orderField)
       .limit(limit)
       .offset(offset);
 
@@ -612,6 +606,7 @@ export class Repository {
       engagementAggregates: row.engagementAggregates as HotspotEngagementAggregates | null,
       earliestPublishedAt: row.earliestPublishedAt,
       latestPublishedAt: row.latestPublishedAt,
+      isHeuristic: row.isHeuristic ?? false,
       createdAt: row.createdAt,
     };
   }
@@ -779,6 +774,60 @@ export class Repository {
       .where(eq(hotspotsTable.id, id))
       .limit(1);
     return result[0] ? this.asHotspotCluster(result[0]) : undefined;
+  }
+
+  // 通知统计 - 订阅健康看板数据
+  async getNotificationStats() {
+    // 获取最近 30 天的通知日志
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const recentLogs = await this.db
+      .select()
+      .from(notificationLogsTable)
+      .where(gte(notificationLogsTable.createdAt, thirtyDaysAgo))
+      .orderBy(desc(notificationLogsTable.createdAt));
+
+    const total = recentLogs.length;
+    const sent = recentLogs.filter((l) => l.status === "sent").length;
+    const failed = recentLogs.filter((l) => l.status === "failed").length;
+
+    // 统计噪音反馈（用户标记为不相关的比例）
+    const irrelevantLogs = recentLogs.filter((l) => {
+      const payload = l.payload as { verdict?: string } | null;
+      return payload?.verdict === "irrelevant";
+    });
+    const relevantLogs = recentLogs.filter((l) => {
+      const payload = l.payload as { verdict?: string } | null;
+      return payload?.verdict === "relevant";
+    });
+
+    // 计算每日送达率趋势（最近 7 天）
+    const dailyStats: { date: string; sent: number; failed: number; deliveryRate: number }[] = [];
+    const now = new Date();
+    for (let i = 6; i >= 0; i--) {
+      const date = new Date(now);
+      date.setDate(date.getDate() - i);
+      const dateStr = date.toISOString().substring(0, 10);
+      const dayLogs = recentLogs.filter((l) => l.createdAt.startsWith(dateStr));
+      const daySent = dayLogs.filter((l) => l.status === "sent").length;
+      const dayFailed = dayLogs.filter((l) => l.status === "failed").length;
+      dailyStats.push({
+        date: dateStr,
+        sent: daySent,
+        failed: dayFailed,
+        deliveryRate: dayLogs.length > 0 ? daySent / dayLogs.length : 1,
+      });
+    }
+
+    return {
+      total,
+      sent,
+      failed,
+      deliveryRate: total > 0 ? sent / total : 1,
+      noiseRatio: sent > 0 ? irrelevantLogs.length / sent : 0,
+      irrelevantCount: irrelevantLogs.length,
+      relevantCount: relevantLogs.length,
+      dailyStats,
+    };
   }
 
   private asSubscriptionRuleRecord(
