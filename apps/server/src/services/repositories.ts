@@ -654,9 +654,26 @@ export class Repository {
     id: number,
     patch: Partial<SubscriptionRuleInput> & { lastDispatchedAt?: string | null },
   ): Promise<SubscriptionRuleRecord | undefined> {
-    const payload: Partial<typeof subscriptionRulesTable.$inferInsert> = {
-      updatedAt: nowIso(),
-    };
+    const payload: Partial<typeof subscriptionRulesTable.$inferInsert> = {};
+
+    // 只有当用户确实修改了配置项时，才刷新规则的配置更新时间 updatedAt，避免被系统后台投递时间标记更新操作污染覆盖
+    const hasConfigChanges = patch.name !== undefined ||
+      patch.enabled !== undefined ||
+      patch.monitorIds !== undefined ||
+      patch.includeKeywords !== undefined ||
+      patch.andKeywords !== undefined ||
+      patch.excludeKeywords !== undefined ||
+      patch.minScore !== undefined ||
+      patch.minTrustScore !== undefined ||
+      patch.minSupportingSources !== undefined ||
+      patch.deliveryFrequency !== undefined ||
+      patch.deliveryTime !== undefined ||
+      patch.prefetchMinutes !== undefined ||
+      patch.recipients !== undefined;
+
+    if (hasConfigChanges) {
+      payload.updatedAt = nowIso();
+    }
 
     if (patch.name !== undefined) payload.name = patch.name;
     if (patch.enabled !== undefined) payload.enabled = patch.enabled;

@@ -33,9 +33,9 @@ function createTransporter(settings: SettingsRecord): Transporter | null {
     secure: settings.smtpSecure,
     auth: settings.smtpUser && settings.smtpPassword
       ? {
-          user: settings.smtpUser,
-          pass: settings.smtpPassword,
-        }
+        user: settings.smtpUser,
+        pass: settings.smtpPassword,
+      }
       : undefined,
   });
 }
@@ -45,7 +45,7 @@ export class NotificationService {
     private readonly repository: Repository,
     private readonly config: AppConfig,
     private readonly bus: LiveEventBus,
-  ) {}
+  ) { }
 
   private async sendEmail(envelope: NotificationEnvelope, settings: SettingsRecord): Promise<void> {
     const transporter = createTransporter(settings);
@@ -642,11 +642,10 @@ export class NotificationService {
 
           <!-- 页脚 -->
           <tr>
-            <td style="padding: 24px 30px; background-color: #fafbfc; border-top: 1px solid rgba(8, 17, 31, 0.05); text-align: center;">
+            <td style="padding: 20px 30px; background-color: #fafbfc; border-top: 1px solid rgba(8, 17, 31, 0.05); text-align: center;">
               <p style="margin: 0; font-size: 11px; color: #94a3b8; line-height: 1.6;">
-                本通知由 <span style="font-weight: 600; color: #475569;">Hot-Monitor 情报分发系统</span> 自动调度发送。<br>
-                您可以随时前往 <a href="${settingsUrl}" target="_blank" style="color: #ef4444; font-weight: 600; text-decoration: none;">订阅控制台</a> 调整此规则的监控关键词或触发阈值。<br>
-                <a href="${settingsUrl}" target="_blank" style="color: #94a3b8; text-decoration: underline; margin-top: 8px; display: inline-block;">一键退订本规则</a>
+                本通知由 <span style="font-weight: 600; color: #475569;">Hot-Monitor 智能热点情报分析系统</span> 自动调度生成与发送。<br>
+                仅面向内部授权成员分发，请妥善保管。
               </p>
             </td>
           </tr>
@@ -702,7 +701,7 @@ export class NotificationService {
                   </td>
                   <td align="right">
                     <span style="font-size: 11px; font-weight: 500; color: #0284c7; background-color: #e0f2fe; padding: 4px 10px; border-radius: 20px;">
-                      规则: ${rule.name}
+                      周期订阅简报
                     </span>
                   </td>
                 </tr>
@@ -723,7 +722,7 @@ export class NotificationService {
                 <tr>
                   <td>
                     <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.6;">
-                      📊 <strong>本期情报速递</strong>：期间共进行系统级扫描，成功匹配并聚合出 <span style="color: #ef4444; font-weight: 700;">${hotspots.length} 个</span> 新热点簇，覆盖来自各大社交媒体及官方博客的 <span style="color: #08111f; font-weight: 700;">${totalSources} 个</span> 支撑信源渠道。
+                      📊 <strong>本期情报速递</strong>：本期已为您自动匹配并深度聚合出 <span style="color: #ef4444; font-weight: 700;">${hotspots.length} 项</span> 核心情报热点，深度关联来自各大社交媒体、技术社区及官方博客的 <span style="color: #08111f; font-weight: 700;">${totalSources} 个</span> 可信原始信源。
                     </p>
                   </td>
                 </tr>
@@ -738,31 +737,55 @@ export class NotificationService {
               <h3 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 700; color: #08111f; text-transform: uppercase; letter-spacing: 0.05em;">🔥 本期高热度排行 (TOP 3)</h3>
               <table width="100%" border="0" cellspacing="0" cellpadding="0" style="border-collapse: separate;">
                 ${top3.map((h, index) => {
-                  const colors = [
-                    "linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)", // #1 Pink-Red
-                    "linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)", // #2 Sky-Blue
-                    "linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)", // #3 Purple
-                  ];
-                  const textColors = ["#be123c", "#0369a1", "#6d28d9"];
-                  return `
+      const colors = [
+        "linear-gradient(135deg, #fff1f2 0%, #ffe4e6 100%)", // #1 Pink-Red
+        "linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%)", // #2 Sky-Blue
+        "linear-gradient(135deg, #faf5ff 0%, #f3e8ff 100%)", // #3 Purple
+      ];
+      const textColors = ["#be123c", "#0369a1", "#6d28d9"];
+      const targetUrl = h.events?.[0]?.sourceUrl || h.supportingUrls?.[0] || "#";
+      
+      // 动态获取首要信源的可信度指标及域名原始信任分数值
+      const firstEvent = h.events?.[0];
+      const trustScore = firstEvent ? firstEvent.authenticityScore : 0.88;
+      let trustTag = "新闻资讯";
+      if (trustScore >= 0.95) {
+        trustTag = "官方机构";
+      } else if (trustScore >= 0.8) {
+        trustTag = "技术社区";
+      } else if (trustScore >= 0.7) {
+        trustTag = "社交媒体";
+      }
+      const tagColor = trustScore >= 0.95 ? "#10b981" : trustScore >= 0.8 ? "#0284c7" : trustScore >= 0.7 ? "#d97706" : "#64748b";
+      const tagBg = trustScore >= 0.95 ? "#ecfdf5" : trustScore >= 0.8 ? "#e0f2fe" : trustScore >= 0.7 ? "#fef3c7" : "#f1f5f9";
+
+      return `
                 <tr>
                   <td style="padding: 14px 18px; margin-bottom: 10px; background: ${colors[index] || "#fafbfc"}; border-radius: 12px; border: 1px solid rgba(8,17,31,0.02); display: block;">
                     <table width="100%" border="0" cellspacing="0" cellpadding="0">
                       <tr>
-                        <td width="28" style="font-size: 18px; font-weight: 800; color: ${textColors[index] || "#475569"};">
+                        <td width="28" style="font-size: 18px; font-weight: 800; color: ${textColors[index] || "#475569"}; vertical-align: top; padding-top: 2px;">
                           #${index + 1}
                         </td>
-                        <td style="font-size: 14px; font-weight: 700; color: #08111f; line-height: 1.4;">
-                          ${h.label}
+                        <td style="font-size: 14px; font-weight: 700; color: #08111f; line-height: 1.4; vertical-align: top;">
+                          <div>
+                            <a href="${targetUrl}" target="_blank" style="color: #08111f; text-decoration: none; hover: underline;">${h.label}</a>
+                            <span style="font-size: 9px; font-weight: 600; color: ${tagColor}; background-color: ${tagBg}; padding: 1px 5px; border-radius: 4px; margin-left: 6px; display: inline-block; vertical-align: middle;">
+                              ${trustTag} ${trustScore.toFixed(2)}
+                            </span>
+                          </div>
+                          <div style="font-size: 12px; font-weight: normal; color: #475569; margin-top: 6px; line-height: 1.5;">
+                            ${h.summary}
+                          </div>
                         </td>
-                        <td width="60" align="right" style="font-size: 13px; font-weight: 700; color: ${textColors[index] || "#475569"};">
-                          ${Math.round(h.score * 100)}% 热
+                        <td width="60" align="right" style="font-size: 13px; font-weight: 700; color: ${textColors[index] || "#475569"}; vertical-align: top; padding-top: 2px;">
+                          ${Math.round(h.score * 100)}% 热度
                         </td>
                       </tr>
                     </table>
                   </td>
                 </tr>`;
-                }).join("")}
+    }).join("")}
               </table>
             </td>
           </tr>` : ""}
@@ -777,14 +800,16 @@ export class NotificationService {
                   <span style="font-size: 24px;">💡</span>
                   <p style="margin: 8px 0 0 0; font-size: 13px; color: #64748b;">本时段未产生超出过滤条件的新热点信号。</p>
                 </div>
-              ` : hotspots.map((h, idx) => `
+              ` : hotspots.map((h, idx) => {
+      const targetUrl = h.events?.[0]?.sourceUrl || h.supportingUrls?.[0] || "#";
+      return `
                 <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: ${idx === hotspots.length - 1 ? "0" : "24px"}; border-radius: 14px; border: 1px solid rgba(8, 17, 31, 0.06); background-color: #fafbfc; overflow: hidden; border-collapse: separate;">
                   <tr>
                     <td style="padding: 16px 20px; border-bottom: 1px solid rgba(8, 17, 31, 0.05); background-color: #ffffff;">
                       <table width="100%" border="0" cellspacing="0" cellpadding="0">
                         <tr>
                           <td>
-                            <span style="font-size: 14px; font-weight: 700; color: #08111f;">${h.label}</span>
+                            <a href="${targetUrl}" target="_blank" style="font-size: 14px; font-weight: 700; color: #08111f; text-decoration: none; hover: underline;">${h.label}</a>
                           </td>
                           <td align="right" width="100">
                             <span style="font-size: 11px; font-weight: 600; color: #ef4444; background-color: #fef2f2; padding: 2px 8px; border-radius: 12px; margin-right: 4px;">
@@ -804,42 +829,42 @@ export class NotificationService {
                       <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed rgba(8,17,31,0.06);">
                         <div style="font-size: 11px; font-weight: 700; color: #8f9ca9; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.05em;">主要信源头条</div>
                         ${h.events.slice(0, 2).map(e => {
-                          const trustScore = e.authenticityScore;
-                          let trustTag = "新闻资讯";
-                          if (trustScore >= 0.95) {
-                            trustTag = "官方机构";
-                          } else if (trustScore >= 0.8) {
-                            trustTag = "技术社区";
-                          } else if (trustScore >= 0.7) {
-                            trustTag = "社交媒体";
-                          }
-                          const tagColor = trustScore >= 0.95 ? "#10b981" : trustScore >= 0.8 ? "#0284c7" : trustScore >= 0.7 ? "#d97706" : "#64748b";
-                          const tagBg = trustScore >= 0.95 ? "#ecfdf5" : trustScore >= 0.8 ? "#e0f2fe" : trustScore >= 0.7 ? "#fef3c7" : "#f1f5f9";
-                          return `
+        const trustScore = e.authenticityScore;
+        let trustTag = "新闻资讯";
+        if (trustScore >= 0.95) {
+          trustTag = "官方机构";
+        } else if (trustScore >= 0.8) {
+          trustTag = "技术社区";
+        } else if (trustScore >= 0.7) {
+          trustTag = "社交媒体";
+        }
+        const tagColor = trustScore >= 0.95 ? "#10b981" : trustScore >= 0.8 ? "#0284c7" : trustScore >= 0.7 ? "#d97706" : "#64748b";
+        const tagBg = trustScore >= 0.95 ? "#ecfdf5" : trustScore >= 0.8 ? "#e0f2fe" : trustScore >= 0.7 ? "#fef3c7" : "#f1f5f9";
+        return `
                         <div style="margin-bottom: 6px; font-size: 12px; color: #08111f;">
-                          • <a href="${e.sourceUrl}" target="_blank" style="color: #475569; text-decoration: none; font-weight: 500;">${e.title}</a> 
+                          • <a href="${e.sourceUrl}" target="_blank" style="color: #475569; text-decoration: none; font-weight: 500; hover: underline;">${e.title}</a> 
                           <span style="font-size: 10px; color: #94a3b8; margin-left: 4px;">(${e.sourceLabel})</span>
                           <span style="font-size: 9px; font-weight: 600; color: ${tagColor}; background-color: ${tagBg}; padding: 1px 5px; border-radius: 4px; margin-left: 4px; display: inline-block; vertical-align: middle;">
-                            ${trustTag}
+                            ${trustTag} ${trustScore.toFixed(2)}
                           </span>
                         </div>`;
-                        }).join("")}
+      }).join("")}
                       </div>
                       ` : ""}
                     </td>
                   </tr>
                 </table>
-              `).join("")}
+              `;
+    }).join("")}
             </td>
           </tr>
 
-          <!-- 订阅配置面板 -->
+          <!-- 页脚 -->
           <tr>
-            <td style="padding: 24px 30px; background-color: #fafbfc; border-top: 1px solid rgba(8, 17, 31, 0.05); text-align: center;">
+            <td style="padding: 20px 30px; background-color: #fafbfc; border-top: 1px solid rgba(8, 17, 31, 0.05); text-align: center;">
               <p style="margin: 0; font-size: 11px; color: #94a3b8; line-height: 1.6;">
-                本通知由 <span style="font-weight: 600; color: #475569;">Hot-Monitor 情报分发系统</span> 自动调度发送。<br>
-                您可以随时前往 <a href="${settingsUrl}" target="_blank" style="color: #ef4444; font-weight: 600; text-decoration: none;">订阅控制台</a> 调整此规则的监控关键词或触发阈值。<br>
-                <a href="${settingsUrl}" target="_blank" style="color: #94a3b8; text-decoration: underline; margin-top: 8px; display: inline-block;">一键退订本简报</a>
+                本通知由 <span style="font-weight: 600; color: #475569;">Hot-Monitor 智能热点情报分析系统</span> 自动调度生成与发送。<br>
+                仅面向内部授权成员分发，请妥善保管。
               </p>
             </td>
           </tr>

@@ -154,8 +154,12 @@ export class MonitorScheduler {
       // 防止同一天或同一个简报周期内发生重发（以防极端的时间重设）
       const todayStr = now.toISOString().substring(0, 10);
       const lastDispatchedDay = rule.lastDispatchedAt ? rule.lastDispatchedAt.substring(0, 10) : "";
-      if (rule.deliveryFrequency === "daily" && lastDispatchedDay === todayStr) {
-        console.info(`[简报拦截] 规则 ${rule.name} (daily) 今天已经投递过简报，不再重复。`);
+
+      // 智能检查：如果用户在上一次投递之后修改了规则配置（如修改时间或关键词），则允许重新投递以立竿见影
+      const isRuleModifiedAfterDispatch = !!(rule.lastDispatchedAt && rule.updatedAt && rule.updatedAt > rule.lastDispatchedAt);
+
+      if (rule.deliveryFrequency === "daily" && lastDispatchedDay === todayStr && !isRuleModifiedAfterDispatch) {
+        console.info(`[简报拦截] 规则 ${rule.name} (daily) 今天已经投递过简报，且投递后未修改过配置，不再重复。`);
         continue;
       }
 
