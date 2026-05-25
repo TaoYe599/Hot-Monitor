@@ -253,6 +253,10 @@ export default function App() {
   const [testingRuleId, setTestingRuleId] = useState<number | null>(null);
   const [updatingRuleId, setUpdatingRuleId] = useState<number | null>(null);
 
+  // 本地临时接收邮箱输入字符状态，避免在输入期间即时拆分和反向冲刷覆盖
+  const [newRecipientsInput, setNewRecipientsInput] = useState("");
+  const [editRecipientsInput, setEditRecipientsInput] = useState("");
+
   // 排序和筛选状态
   const [filteredEvents, setFilteredEvents] = useState<VerifiedEvent[]>([]);
   const [filteredHotspots, setFilteredHotspots] = useState<HotspotCluster[]>([]);
@@ -759,12 +763,24 @@ export default function App() {
     event.preventDefault();
     if (!newRuleForm) return;
     
+    // 将本地临时多邮箱状态解析并装载到表单参数中，支持换行、中英文逗号、分号及空格拆分
+    const recipientsArray = newRecipientsInput.split(/[\n,，;\s]+/).map((s) => s.trim()).filter(Boolean);
+    
+    // 统一进行关键词的清洗，排除输入过程中的多余空项
+    const finalForm = { 
+      ...newRuleForm, 
+      recipients: recipientsArray,
+      includeKeywords: newRuleForm.includeKeywords.map((s) => s.trim()).filter(Boolean),
+      andKeywords: newRuleForm.andKeywords.map((s) => s.trim()).filter(Boolean),
+      excludeKeywords: newRuleForm.excludeKeywords.map((s) => s.trim()).filter(Boolean),
+    };
+    
     // 前端即时强校验，避免发送垃圾请求
-    if (!newRuleForm.name.trim()) {
+    if (!finalForm.name.trim()) {
       setFormError("订阅规则名称不能为空，请输入具有识别度的规则名称。");
       return;
     }
-    if (newRuleForm.recipients.length === 0) {
+    if (finalForm.recipients.length === 0) {
       setFormError("目标邮箱不能为空，请至少配置一个有效的接收人邮箱。");
       return;
     }
@@ -772,7 +788,7 @@ export default function App() {
     setFormBusy(true);
     setFormError(null);
     try {
-      await api.createSubscriptionRule(newRuleForm);
+      await api.createSubscriptionRule(finalForm);
       setNewRuleForm(null);
       setFormError(null);
       setNotice("智能订阅规则已成功创建并开启！");
@@ -1262,13 +1278,13 @@ export default function App() {
 
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                             <Field label="包含关键词 (OR)">
-                              <textarea value={newRuleForm.includeKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, includeKeywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : c)} placeholder="DeepSeek, Llama, GPT" rows={2} className="text-xs" />
+                              <textarea value={newRuleForm.includeKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, includeKeywords: e.target.value.split(",").map((s) => s.trim()) } : c)} placeholder="DeepSeek, Llama, GPT" rows={2} className="text-xs" />
                             </Field>
                             <Field label="必须包含 (AND)">
-                              <textarea value={newRuleForm.andKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, andKeywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : c)} placeholder="开源, 发布" rows={2} className="text-xs" />
+                              <textarea value={newRuleForm.andKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, andKeywords: e.target.value.split(",").map((s) => s.trim()) } : c)} placeholder="开源, 发布" rows={2} className="text-xs" />
                             </Field>
                             <Field label="排除关键词 (NOT)">
-                              <textarea value={newRuleForm.excludeKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, excludeKeywords: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : c)} placeholder="广告, 推广" rows={2} className="text-xs" />
+                              <textarea value={newRuleForm.excludeKeywords.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, excludeKeywords: e.target.value.split(",").map((s) => s.trim()) } : c)} placeholder="广告, 推广" rows={2} className="text-xs" />
                             </Field>
                           </div>
 
@@ -1284,8 +1300,8 @@ export default function App() {
                             </Field>
                           </div>
 
-                          <Field label="接收邮箱" description="多个邮箱用英文逗号分隔">
-                            <input value={newRuleForm.recipients.join(", ")} onChange={(e) => setNewRuleForm((c) => c ? { ...c, recipients: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) } : c)} placeholder="tech@company.com, cto@company.com" />
+                          <Field label="接收邮箱" description="支持以换行、逗号、分号或空格分隔多个接收邮箱">
+                            <textarea rows={2} value={newRecipientsInput} onChange={(e) => setNewRecipientsInput(e.target.value)} placeholder="tech@company.com&#10;cto@company.com" />
                           </Field>
 
                           {formError && (
@@ -1304,7 +1320,7 @@ export default function App() {
                       ) : (
                         <div className="flex items-center justify-between">
                           <p className="text-xs text-[var(--ink-soft)]">{subRules.length} 条订阅规则</p>
-                          <button onClick={() => setNewRuleForm({ ...defaultNewRuleForm })} className="rounded-full bg-[var(--ember)] px-5 py-2 text-xs font-semibold text-white smooth-interactive active:scale-95 cursor-pointer">
+                          <button onClick={() => { setNewRuleForm({ ...defaultNewRuleForm }); setNewRecipientsInput(""); }} className="rounded-full bg-[var(--ember)] px-5 py-2 text-xs font-semibold text-white smooth-interactive active:scale-95 cursor-pointer">
                             + 新建规则
                           </button>
                         </div>
@@ -1323,11 +1339,23 @@ export default function App() {
                                     e.preventDefault();
                                     if (!editingRuleForm) return;
 
-                                    if (!editingRuleForm.name.trim()) {
+                                    // 将本地临时多邮箱状态解析并装载到表单参数中，支持换行、中英文逗号、分号及空格拆分
+                                    const recipientsArray = editRecipientsInput.split(/[\n,，;\s]+/).map((s) => s.trim()).filter(Boolean);
+                                    
+                                    // 统一进行关键词的清洗，排除就地编辑保存过程中的多余空项
+                                    const finalForm = { 
+                                      ...editingRuleForm, 
+                                      recipients: recipientsArray,
+                                      includeKeywords: editingRuleForm.includeKeywords.map((s) => s.trim()).filter(Boolean),
+                                      andKeywords: editingRuleForm.andKeywords.map((s) => s.trim()).filter(Boolean),
+                                      excludeKeywords: editingRuleForm.excludeKeywords.map((s) => s.trim()).filter(Boolean),
+                                    };
+
+                                    if (!finalForm.name.trim()) {
                                       setEditError("订阅规则名称不能为空。");
                                       return;
                                     }
-                                    if (editingRuleForm.recipients.length === 0) {
+                                    if (finalForm.recipients.length === 0) {
                                       setEditError("匹配邮箱不能为空，请配置至少一个接收人邮箱。");
                                       return;
                                     }
@@ -1335,9 +1363,9 @@ export default function App() {
                                     setEditBusy(true);
                                     setEditError(null);
                                     try {
-                                      await api.updateSubscriptionRule(rule.id, editingRuleForm);
+                                      await api.updateSubscriptionRule(rule.id, finalForm);
                                       setEditingRuleId(null);
-                                      setNotice(`智能订阅规则「${editingRuleForm.name}」已保存修改！`);
+                                      setNotice(`智能订阅规则「${finalForm.name}」已保存修改！`);
                                       await refresh();
                                     } catch (reason) {
                                       setEditError(reason instanceof Error ? reason.message : String(reason));
@@ -1391,13 +1419,13 @@ export default function App() {
                                     {/* 三段关键词 */}
                                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                       <Field label="包含任意词 (OR)" description="匹配其一即可，逗号/换行分隔">
-                                        <input placeholder="如: DeepSeek, Llama" value={editingRuleForm.includeKeywords.join(",")} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, includeKeywords: splitLines(e.target.value) } : c)} />
+                                        <input placeholder="如: DeepSeek, Llama" value={editingRuleForm.includeKeywords.join(",")} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, includeKeywords: e.target.value.split(/[\r\n,，]+/).map((s) => s.trim()) } : c)} />
                                       </Field>
                                       <Field label="必须同时包含 (AND)" description="匹配全部，逗号/换行分隔">
-                                        <input placeholder="如: 开源, 权重" value={editingRuleForm.andKeywords.join(",")} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, andKeywords: splitLines(e.target.value) } : c)} />
+                                        <input placeholder="如: 开源, 权重" value={editingRuleForm.andKeywords.join(",")} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, andKeywords: e.target.value.split(/[\r\n,，]+/).map((s) => s.trim()) } : c)} />
                                       </Field>
                                       <Field label="排除词过滤器 (NOT)" description="只要命中即强力拦截，逗号/换行分隔">
-                                        <input placeholder="如: 炒作, 八卦" value={editingRuleForm.excludeKeywords.join(",")} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, excludeKeywords: splitLines(e.target.value) } : c)} />
+                                        <input placeholder="如: 炒作, 八卦" value={editingRuleForm.excludeKeywords.join(",")} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, excludeKeywords: e.target.value.split(/[\r\n,，]+/).map((s) => s.trim()) } : c)} />
                                       </Field>
                                     </div>
 
@@ -1415,8 +1443,8 @@ export default function App() {
                                     </div>
 
                                     {/* 邮箱接收人 */}
-                                    <Field label="目标路由邮箱" description="每行或用逗号分隔一个接收邮箱">
-                                      <textarea rows={2} value={editingRuleForm.recipients.join("\n")} onChange={(e) => setEditingRuleForm((c: any) => c ? { ...c, recipients: splitLines(e.target.value) } : c)} />
+                                    <Field label="目标路由邮箱" description="支持以换行、逗号、分号或空格分隔多个接收邮箱">
+                                      <textarea rows={2} value={editRecipientsInput} onChange={(e) => setEditRecipientsInput(e.target.value)} />
                                     </Field>
 
                                     {/* 编辑错误就地提示 */}
@@ -1555,6 +1583,7 @@ export default function App() {
                                             deliveryTime: rule.deliveryTime,
                                             recipients: rule.recipients,
                                           });
+                                          setEditRecipientsInput(rule.recipients.join("\n"));
                                         }}
                                       >
                                         编辑规则
