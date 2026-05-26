@@ -40,6 +40,7 @@ const monitorFormSchema = z.object({
       baidu: z.boolean().default(true),
       weibo: z.boolean().default(true),
       reddit: z.boolean().default(true),
+      bing: z.boolean().default(true),
     })
     .default(DEFAULT_SOURCE_CONFIG),
 });

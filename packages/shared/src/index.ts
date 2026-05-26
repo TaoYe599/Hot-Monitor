@@ -10,6 +10,7 @@ export type SourceKind =
   | "baidu"
   | "weibo"
   | "reddit"
+  | "bing"
   | "manual";
 
 export type NotificationChannel = "email";
@@ -24,6 +25,7 @@ export interface MonitorSourceConfig {
   baidu: boolean;
   weibo: boolean;
   reddit: boolean;
+  bing: boolean;
 }
 
 export interface MonitorRecord {
@@ -330,6 +332,7 @@ export const DEFAULT_SOURCE_CONFIG: MonitorSourceConfig = {
   baidu: true,
   weibo: true,
   reddit: true,
+  bing: true,
 };
 
 

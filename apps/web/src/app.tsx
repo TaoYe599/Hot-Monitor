@@ -244,6 +244,9 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // 监控任务编辑状态
+  const [editingMonitorId, setEditingMonitorId] = useState<number | null>(null);
+
   // 智能订阅规则列表与编辑表单状态
   const [subRules, setSubRules] = useState<SubscriptionRuleRecord[]>([]);
   const [newRuleForm, setNewRuleForm] = useState<SubscriptionRuleInput | null>(null);
@@ -515,21 +518,56 @@ export default function App() {
     setSettingsForm((current) => (current ? updater(current) : current));
   }
 
-  async function createMonitor(event: React.FormEvent) {
+  async function saveMonitor(event: React.FormEvent) {
     event.preventDefault();
-    setBusy("正在创建任务…");
     setError(null);
     setNotice(null);
-    try {
-      await api.createMonitor(monitorForm);
-      setMonitorForm(defaultMonitorForm);
-      setNotice("任务已创建，可以点击“扫描”提交后台任务。");
-      await refresh();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setBusy(null);
+
+    if (editingMonitorId === null) {
+      setBusy("正在创建任务…");
+      try {
+        await api.createMonitor(monitorForm);
+        setMonitorForm(defaultMonitorForm);
+        setNotice("任务已创建，可以点击“扫描”提交后台任务。");
+        await refresh();
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setBusy(null);
+      }
+    } else {
+      setBusy("正在保存任务修改…");
+      try {
+        await api.updateMonitor(editingMonitorId, monitorForm);
+        setMonitorForm(defaultMonitorForm);
+        setEditingMonitorId(null);
+        setNotice("任务修改已成功保存。");
+        await refresh();
+      } catch (reason) {
+        setError(reason instanceof Error ? reason.message : String(reason));
+      } finally {
+        setBusy(null);
+      }
     }
+  }
+
+  function handleStartEdit(monitor: MonitorRecord) {
+    setEditingMonitorId(monitor.id);
+    setMonitorForm({
+      name: monitor.name,
+      query: monitor.query,
+      description: monitor.description ?? "",
+      intervalMinutes: monitor.intervalMinutes,
+      cooldownMinutes: monitor.cooldownMinutes,
+      enabled: monitor.enabled,
+      sources: monitor.sources,
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  function handleCancelEdit() {
+    setEditingMonitorId(null);
+    setMonitorForm(defaultMonitorForm);
   }
 
   async function runMonitor(id: number) {
@@ -922,9 +960,18 @@ export default function App() {
               <Route path="/monitors" element={
                   <div className="grid gap-5 xl:grid-cols-[1fr_0.78fr]">
                     {/* 中栏：冷静的输入画布 */}
-                    <form className="panel-card rounded-[2rem] p-6 h-fit" onSubmit={createMonitor}>
-                      <h3 className="text-lg font-bold mb-5 flex items-center gap-2 select-none text-[var(--ink)] tracking-tight">
-                        <span>新建监控画布</span>
+                    <form className="panel-card rounded-[2rem] p-6 h-fit" onSubmit={saveMonitor}>
+                      <h3 className="text-lg font-bold mb-5 flex items-center justify-between gap-2 select-none text-[var(--ink)] tracking-tight">
+                        <span>{editingMonitorId === null ? "新建监控画布" : "编辑监控画布 (编辑中)"}</span>
+                        {editingMonitorId !== null && (
+                          <button
+                            type="button"
+                            onClick={handleCancelEdit}
+                            className="rounded-full bg-slate-100 hover:bg-slate-200 px-3 py-1 text-xs font-semibold text-slate-500 cursor-pointer transition-colors"
+                          >
+                            取消编辑
+                          </button>
+                        )}
                       </h3>
                       <div className="grid gap-5">
                         <Field label="任务名称">
@@ -981,6 +1028,7 @@ export default function App() {
                               ["zhihu", "知乎"],
                               ["baidu", "百度"],
                               ["reddit", "Reddit"],
+                              ["bing", "Bing Search"],
                             ].map(([key, label]) => {
                               const isSelected = monitorForm.sources[key as keyof typeof monitorForm.sources];
                               return (
@@ -1014,7 +1062,7 @@ export default function App() {
                             type="submit" 
                             className="w-40 rounded-xl bg-[var(--ink)] py-2.5 text-xs font-bold text-white smooth-interactive active:scale-98 cursor-pointer shadow-md hover:shadow-lg transition-all duration-300"
                           >
-                            开启监控
+                            {editingMonitorId === null ? "开启监控" : "保存修改"}
                           </button>
                         </div>
                       </div>
@@ -1063,8 +1111,19 @@ export default function App() {
                               </div>
                             </div>
 
-                            {/* Hover 时渐进式淡入的雷达扫描和删除悬浮控制钮 */}
+                            {/* Hover 时渐进式淡入的雷达扫描、编辑和删除悬浮控制钮 */}
                             <div className="absolute right-4 bottom-4 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center gap-2">
+                              <button 
+                                type="button" 
+                                title="编辑监控任务配置"
+                                className="h-8 w-8 rounded-full border border-[var(--line)] bg-white/95 text-[var(--ink-soft)] flex items-center justify-center smooth-interactive cursor-pointer hover:border-[var(--ember)] hover:text-[var(--ember)]"
+                                onClick={() => handleStartEdit(monitor)}
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                                </svg>
+                              </button>
+                              
                               <button 
                                 type="button" 
                                 disabled={isRunning}

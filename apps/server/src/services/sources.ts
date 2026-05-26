@@ -206,6 +206,7 @@ function scoreDomainTrust(url: string, baseTrust = 0.5): number {
     if (hostname.includes("news.ycombinator.com")) return 0.88;
     if (hostname.includes("zhihu.com")) return 0.8;
     if (hostname.includes("baidu.com")) return Math.max(baseTrust, 0.6);
+    if (hostname.includes("bing.com")) return Math.max(baseTrust, 0.6);
     if (hostname.includes("twitter.com") || hostname.includes("x.com")) return 0.82;
     if (hostname.includes("t.co")) return 0.78;
     return baseTrust;
@@ -804,6 +805,83 @@ async function collectBaidu(monitor: MonitorRecord): Promise<SourceItem[]> {
   return variantResults.flat();
 }
 
+export function parseBingResults(html: string): Array<{ title: string; url: string; snippet: string }> {
+  const $ = load(html);
+  const results: Array<{ title: string; url: string; snippet: string }> = [];
+
+  $(".b_algo").each((_, element) => {
+    const titleA = $(element).find("h2 a").first();
+    const title = titleA.text().trim();
+    const url = titleA.attr("href") ?? "";
+
+    // 获取描述：通常在 .b_caption p 或 .b_snippet 或 p 中
+    let snippet = $(element).find(".b_caption p").first().text().trim();
+    if (!snippet) {
+      snippet = $(element).find(".b_snippet").first().text().trim();
+    }
+    if (!snippet) {
+      snippet = $(element).find("p").first().text().trim();
+    }
+
+    if (title && url) {
+      results.push({ title, url, snippet });
+    }
+  });
+
+  return results;
+}
+
+async function collectBing(monitor: MonitorRecord): Promise<SourceItem[]> {
+  const variants = generateQueryVariants(monitor).slice(0, 3);
+  const results: SourceItem[] = [];
+
+  for (const variant of variants) {
+    try {
+      const bingUrl = `https://cn.bing.com/search?q=${encodeURIComponent(variant)}`;
+      const response = await fetchWithTimeout(bingUrl, {
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+          "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        },
+      }, 15000); // 15秒超时保障，若封锁则自动降级
+
+      if (!response.ok) {
+        continue;
+      }
+
+      const html = await response.text();
+      const bingResults = parseBingResults(html).slice(0, 4);
+
+      const candidates = await Promise.all(
+        bingResults.map(async (result) => {
+          const article = await extractReadableContent(result.url);
+          return {
+            sourceKind: "bing",
+            sourceLabel: "Bing Search",
+            title: compactText(result.title, 120),
+            url: normalizeUrl(result.url),
+            publishedAt: null,
+            author: null,
+            excerpt: compactText(result.snippet || article?.excerpt || result.title, 220),
+            content: compactText(article?.content || result.snippet || result.title, 2200),
+            engagementScore: 0.35,
+            trustScore: scoreDomainTrust(result.url, 0.6),
+            tags: [],
+            raw: result as unknown as Record<string, unknown>,
+          } satisfies SourceItem;
+        }),
+      );
+      results.push(...candidates);
+    } catch {
+      // 容错静默降级，绝不影响其它轮询通道
+    }
+  }
+
+  return results;
+}
+
+
 // Reddit subreddits to monitor for AI/tech content
 const REDDIT_SUBREDDITS = [
   { name: "MachineLearning", label: "r/MachineLearning" },
@@ -997,6 +1075,8 @@ export class SourceService {
     if (monitor.sources.baidu) tasks.push({ name: "百度搜索", promise: collectBaidu(monitor) });
     if (isCancelled?.()) return [];
     if (monitor.sources.reddit) tasks.push({ name: "Reddit", promise: collectReddit(monitor) });
+    if (isCancelled?.()) return [];
+    if (monitor.sources.bing) tasks.push({ name: "Bing Search", promise: collectBing(monitor) });
     if (isCancelled?.()) return [];
 
     // 并行执行所有来源收集，同时记录结果
