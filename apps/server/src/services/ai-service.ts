@@ -163,17 +163,19 @@ export class AiService {
     attempt = 1,
     maxRetries = 3,
   ): Promise<z.infer<TSchema> | null> {
-    // 覆盖配置模型为小米 MIMO 平台指定的模型（如 deepseek-v3 / MiMo-V2.5-Pro）
+    // 覆盖配置模型为小米 MIMO 平台指定的模型（如 deepseek-v3 / mimo-v2.5-pro）
     // 注意：部分中转或国内模型不支持 response_format: { type: "json_object" } 字段，直接传入会导致 400 Param Incorrect 错误。
-    // 我们在这里使用解构赋值剔除 response_format，只传递 messages 等标准主体，
-    // 底层的 parseAndValidate 具备高度弹性的正则提取逻辑，即使模型带有 Markdown 块返回也能稳健提取。
+    // 我们在这里使用解构赋值剔除 response_format，只传递 messages 等标准主体。
+    // 同时，小米平台对模型名称有着极为严苛的纯小写敏感要求（如 mimo-v2.5-pro），
+    // 为了防止用户在环境变量中输入大小写混合格式（或热重载残留旧值）导致 400 报错，我们在此执行强健的防御性 toLowerCase() 处理。
     const { response_format, ...restBody } = body;
+    const finalModelName = this.config.mimoModel.toLowerCase();
     const mimoBody = {
       ...restBody,
-      model: this.config.mimoModel,
+      model: finalModelName,
     };
     const bodyStr = JSON.stringify(mimoBody);
-    console.info(`[ai] [INFO] 调用小米 MIMO 接口 (${this.config.mimoModel}) - 尝试 ${attempt}/${maxRetries}, 请求体大小: ${bodyStr.length} 字符`);
+    console.info(`[ai] [INFO] 调用小米 MIMO 接口 (${finalModelName}) - 尝试 ${attempt}/${maxRetries}, 请求体大小: ${bodyStr.length} 字符`);
 
     let response: Response;
     let responseText: string | null = null;
