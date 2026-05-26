@@ -22,6 +22,8 @@ for (const envPath of possibleEnvPaths) {
 }
 
 const envSchema = z.object({
+  MIMO_API_KEY: z.string().optional(), // 小米 API Key 凭证（可选，用于主 AI 分析端点）
+  MIMO_MODEL: z.string().default("deepseek-v3"), // 小米 API 调用的模型名称，默认 deepseek-v3
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default("openai/gpt-4.1-mini"),
   OPENROUTER_SITE_URL: z.string().default("http://localhost:5173"),
@@ -47,6 +49,8 @@ const envSchema = z.object({
 });
 
 export interface AppConfig {
+  mimoApiKey?: string; // 小米 API Key（降级流中作为首选）
+  mimoModel: string; // 小米模型名称
   openRouterApiKey?: string;
   openRouterModel: string;
   openRouterSiteUrl: string;
@@ -82,6 +86,8 @@ export function loadConfig(): AppConfig {
   const env = envSchema.parse(process.env);
 
   return {
+    mimoApiKey: env.MIMO_API_KEY,
+    mimoModel: env.MIMO_MODEL,
     openRouterApiKey: env.OPENROUTER_API_KEY,
     openRouterModel: env.OPENROUTER_MODEL,
     openRouterSiteUrl: env.OPENROUTER_SITE_URL,

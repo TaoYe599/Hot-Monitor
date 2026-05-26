@@ -84,21 +84,28 @@ const discoverHotspotsSchema = z.object({
 export class AiService {
   constructor(private readonly config: AppConfig) {}
 
+  /**
+   * 提交结构化的 AI 提示词请求
+   * 
+   * @param schemaName 校验模式名称，主要用于日志追踪与降级标记
+   * @param schema Zod 校验 Schema，用于强约束 AI 响应格式
+   * @param messages 包含 System 与 User 的结构化对话消息数组
+   * @returns 校验通过并符合 Zod 类型定义的响应数据，或在无 API 配置时返回 null
+   */
   private async postStructuredPrompt<TSchema extends z.ZodTypeAny>(
     schemaName: string,
     schema: TSchema,
     messages: Array<{ role: "system" | "user"; content: string }>,
   ): Promise<z.infer<TSchema> | null> {
-    if (!this.config.openRouterApiKey) {
-      console.warn("[ai] OpenRouter API key not configured, using heuristic fallback");
+    if (!this.config.openRouterApiKey && !this.config.mimoApiKey) {
+      console.warn("[ai] [WARNING] 未配置 OpenRouter 或小米 MIMO API 密钥，将采用启发式备用解析 (Heuristic Fallback)");
       return null;
     }
 
     const body = {
-      model: this.config.openRouterModel,
+      model: this.config.openRouterModel, // 默认配置模型，在 postToMimo 中会被 mimoModel 覆盖
       messages,
-      // DeepSeek V4 Flash 只支持 json_object，不支持 json_schema
-      // 使用 json_object 并在 system prompt 中要求 JSON 输出，由 zod 验证
+      // 使用 json_object 并在 system prompt 中硬性要求 JSON 输出，以供 zod 在客户端解析校验
       response_format: {
         type: "json_object",
       },
@@ -107,7 +114,160 @@ export class AiService {
     return this.executeWithRetry(schemaName, schema, body);
   }
 
-  private async executeWithRetry<TSchema extends z.ZodTypeAny>(
+  /**
+   * 解析并验证 AI 返回的 JSON 字符串是否符合指定的 Zod Schema 格式
+   * 
+   * @param content AI 返回的原始内容字符串
+   * @param schema Zod 校验 Schema
+   * @returns 校验通过的解析对象
+   * @throws 当解析出错或不符合 Zod schema 格式时抛出异常
+   */
+  private parseAndValidate<TSchema extends z.ZodTypeAny>(
+    content: string,
+    schema: TSchema,
+  ): z.infer<TSchema> {
+    try {
+      // 1. 尝试直接进行整串 JSON 解析
+      try {
+        const parsed = JSON.parse(content);
+        return schema.parse(parsed);
+      } catch {
+        // 2. 如果直接解析失败，尝试通过正则表达式提取首个 {...} 的 JSON 结构体
+        // 部分 LLM 在返回 JSON 时可能会夹带 Markdown 标识符或解释性前缀后缀
+        const jsonMatch = content.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          return schema.parse(parsed);
+        }
+        throw new Error("未能从返回内容中提取到合法的 JSON 格式");
+      }
+    } catch (err) {
+      console.error(`[ai] [ERROR] JSON 解析或 Schema 验证失败，原始响应内容为: ${content.slice(0, 300)}...`);
+      throw new Error(`AI 返回内容解析校验失败: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  /**
+   * 通过小米 MIMO API 提交结构化对话请求（主首选端点）
+   * 
+   * @param schemaName 校验模式名称
+   * @param schema Zod 校验 Schema
+   * @param body 请求主体内容
+   * @param attempt 当前重试次数
+   * @param maxRetries 最大重试次数
+   */
+  private async postToMimo<TSchema extends z.ZodTypeAny>(
+    schemaName: string,
+    schema: TSchema,
+    body: Record<string, unknown>,
+    attempt = 1,
+    maxRetries = 3,
+  ): Promise<z.infer<TSchema> | null> {
+    // 覆盖配置模型为小米 MIMO 平台指定的模型（如 deepseek-v3）
+    const mimoBody = {
+      ...body,
+      model: this.config.mimoModel,
+    };
+    const bodyStr = JSON.stringify(mimoBody);
+    console.info(`[ai] [INFO] 调用小米 MIMO 接口 (${this.config.mimoModel}) - 尝试 ${attempt}/${maxRetries}, 请求体大小: ${bodyStr.length} 字符`);
+
+    let response: Response;
+    let responseText: string | null = null;
+
+    try {
+      response = await fetch("https://api.xiaomimimo.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "api-key": this.config.mimoApiKey!,
+          "Content-Type": "application/json",
+        },
+        body: bodyStr,
+      });
+    } catch (err) {
+      throw new Error(`小米 MIMO 网络错误: ${err instanceof Error ? err.message : String(err)}`);
+    }
+
+    try {
+      responseText = await response.text();
+    } catch {
+      // 无法读取 Body 时，继续向下处理，让后续判定捕获异常
+    }
+
+    // 处理频控与超载状态进行平滑重试（429 / 503）
+    if (response.status === 429 || response.status === 503) {
+      const retryAfter = Number(response.headers.get("Retry-After"));
+      if (attempt < maxRetries) {
+        const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * attempt;
+        console.warn(`[ai] [WARNING] 小米 MIMO 接口触发频控或过载限制 (${response.status})，将在 ${waitMs}ms 后发起第 ${attempt + 1} 次重试...`);
+        await new Promise((resolve) => setTimeout(resolve, waitMs));
+        return this.postToMimo(schemaName, schema, body, attempt + 1, maxRetries);
+      }
+      throw new Error(`小米 MIMO 接口在 ${maxRetries} 次重试后仍然频控超载限制`);
+    }
+
+    // 处理其他非 200 的 HTTP 错误响应
+    if (!response.ok) {
+      let errorDetail = "";
+      try {
+        if (responseText) {
+          const errorPayload = JSON.parse(responseText) as {
+            error?: { message?: string; code?: string };
+            message?: string;
+          };
+          errorDetail = errorPayload.error?.message || errorPayload.message || "";
+        }
+      } catch {
+        errorDetail = responseText || "";
+      }
+
+      // 500+ 服务器错误通常是瞬时抖动，可以进行重试
+      if (response.status >= 500 && attempt < maxRetries) {
+        console.warn(`[ai] [WARNING] 小米 MIMO 服务端故障 ${response.status}: ${errorDetail.slice(0, 200)}，准备重试...`);
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        return this.postToMimo(schemaName, schema, body, attempt + 1, maxRetries);
+      }
+
+      console.error(`[ai] [ERROR] 小米 MIMO 接口报错 ${response.status}: ${errorDetail.slice(0, 500)}`);
+      throw new Error(`小米 MIMO 请求失败 (${response.status}): ${errorDetail.slice(0, 200)}`);
+    }
+
+    if (!responseText) {
+      console.warn("[ai] [WARNING] 小米 MIMO 接口返回空数据");
+      return null;
+    }
+
+    let payload: { choices?: Array<{ message?: { content?: string | null } }>; error?: { message?: string } };
+    try {
+      payload = JSON.parse(responseText);
+    } catch {
+      console.error(`[ai] [ERROR] 无法将小米 MIMO 响应成功解析为 JSON 结构: ${responseText.slice(0, 300)}...`);
+      throw new Error("小米 MIMO 响应解析 JSON 失败");
+    }
+
+    if (payload.error) {
+      console.error(`[ai] [ERROR] 小米 MIMO 服务端返回 API-level 错误: ${payload.error.message}`);
+      throw new Error(`小米 MIMO API 错误: ${payload.error.message}`);
+    }
+
+    const content = payload.choices?.[0]?.message?.content;
+    if (!content) {
+      console.warn("[ai] [WARNING] 小米 MIMO 接口返回的 choices message content 为空");
+      return null;
+    }
+
+    return this.parseAndValidate(content, schema);
+  }
+
+  /**
+   * 通过 OpenRouter API 提交结构化对话请求（备份兜底端点）
+   * 
+   * @param schemaName 校验模式名称
+   * @param schema Zod 校验 Schema
+   * @param body 请求主体内容
+   * @param attempt 当前重试次数
+   * @param maxRetries 最大重试次数
+   */
+  private async postToOpenRouter<TSchema extends z.ZodTypeAny>(
     schemaName: string,
     schema: TSchema,
     body: Record<string, unknown>,
@@ -115,7 +275,7 @@ export class AiService {
     maxRetries = 3,
   ): Promise<z.infer<TSchema> | null> {
     const bodyStr = JSON.stringify(body);
-    console.info(`[ai] calling OpenRouter (${this.config.openRouterModel}) - attempt ${attempt}/${maxRetries}, body size: ${bodyStr.length} chars`);
+    console.info(`[ai] [INFO] 调用 OpenRouter 备份接口 (${this.config.openRouterModel}) - 尝试 ${attempt}/${maxRetries}, 请求体大小: ${bodyStr.length} 字符`);
 
     let response: Response;
     let responseText: string | null = null;
@@ -132,29 +292,28 @@ export class AiService {
         body: bodyStr,
       });
     } catch (err) {
-      throw new Error(`OpenRouter network error: ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(`OpenRouter 备份网络错误: ${err instanceof Error ? err.message : String(err)}`);
     }
 
-    // Read response body once and reuse
     try {
       responseText = await response.text();
     } catch {
-      // If we can't read the body, continue with what we have
+      // 无法读取 Body 时，继续向下处理，让后续判定捕获异常
     }
 
-    // Handle rate limiting with retry
+    // 频控与超载重试（429 / 503）
     if (response.status === 429 || response.status === 503) {
       const retryAfter = Number(response.headers.get("Retry-After"));
       if (attempt < maxRetries) {
         const waitMs = Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : 1000 * attempt;
-        console.warn(`[ai] Rate limited (${response.status}), waiting ${waitMs}ms before retry...`);
+        console.warn(`[ai] [WARNING] OpenRouter 备份接口触发频控或过载限制 (${response.status})，将在 ${waitMs}ms 后发起第 ${attempt + 1} 次重试...`);
         await new Promise((resolve) => setTimeout(resolve, waitMs));
-        return this.executeWithRetry(schemaName, schema, body, attempt + 1, maxRetries);
+        return this.postToOpenRouter(schemaName, schema, body, attempt + 1, maxRetries);
       }
-      throw new Error(`OpenRouter rate limited after ${maxRetries} attempts`);
+      throw new Error(`OpenRouter 备份接口在 ${maxRetries} 次重试后仍然频控超载限制`);
     }
 
-    // Handle other HTTP errors
+    // 其他 HTTP 错误状态处理
     if (!response.ok) {
       let errorDetail = "";
       try {
@@ -169,20 +328,19 @@ export class AiService {
         errorDetail = responseText || "";
       }
 
-      // 500 errors are often transient, retry once
+      // 500+ 服务器错误通常是瞬时抖动，可以进行重试
       if (response.status >= 500 && attempt < maxRetries) {
-        console.warn(`[ai] Server error ${response.status}: ${errorDetail.slice(0, 200)}, retrying...`);
+        console.warn(`[ai] [WARNING] OpenRouter 服务端故障 ${response.status}: ${errorDetail.slice(0, 200)}，准备重试...`);
         await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
-        return this.executeWithRetry(schemaName, schema, body, attempt + 1, maxRetries);
+        return this.postToOpenRouter(schemaName, schema, body, attempt + 1, maxRetries);
       }
 
-      console.error(`[ai] OpenRouter error ${response.status}: ${errorDetail.slice(0, 500)}`);
-      throw new Error(`OpenRouter request failed (${response.status}): ${errorDetail.slice(0, 200)}`);
+      console.error(`[ai] [ERROR] OpenRouter 备份接口报错 ${response.status}: ${errorDetail.slice(0, 500)}`);
+      throw new Error(`OpenRouter 备份请求失败 (${response.status}): ${errorDetail.slice(0, 200)}`);
     }
 
-    // Parse successful response
     if (!responseText) {
-      console.warn("[ai] OpenRouter returned empty response");
+      console.warn("[ai] [WARNING] OpenRouter 备份接口返回空数据");
       return null;
     }
 
@@ -190,43 +348,67 @@ export class AiService {
     try {
       payload = JSON.parse(responseText);
     } catch {
-      console.error(`[ai] Failed to parse response as JSON: ${responseText.slice(0, 300)}...`);
-      throw new Error("Failed to parse AI response as JSON");
+      console.error(`[ai] [ERROR] 无法将 OpenRouter 备份响应成功解析为 JSON 结构: ${responseText.slice(0, 300)}...`);
+      throw new Error("OpenRouter 备份响应解析 JSON 失败");
     }
 
-    // Check for API-level errors in response body
     if (payload.error) {
-      console.error(`[ai] OpenRouter API error: ${payload.error.message}`);
-      throw new Error(`OpenRouter API error: ${payload.error.message}`);
+      console.error(`[ai] [ERROR] OpenRouter 备份服务端返回 API-level 错误: ${payload.error.message}`);
+      throw new Error(`OpenRouter API 错误: ${payload.error.message}`);
     }
 
     const content = payload.choices?.[0]?.message?.content;
     if (!content) {
-      console.warn("[ai] OpenRouter returned empty content");
+      console.warn("[ai] [WARNING] OpenRouter 备份接口返回的 choices message content 为空");
       return null;
     }
 
-  // Parse and validate JSON against schema
-  try {
-    // Try direct parse first
-    try {
-      const parsed = JSON.parse(content);
-      return schema.parse(parsed);
-    } catch {
-      // If direct parse fails, try to find JSON in the content
-      // Models sometimes add text before/after JSON
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
-        return schema.parse(parsed);
-      }
-      throw new Error("No valid JSON found in content");
-    }
-  } catch (err) {
-    console.error(`[ai] Failed to parse content: ${content.slice(0, 300)}...`);
-    throw new Error(`Failed to parse AI content: ${err instanceof Error ? err.message : String(err)}`);
+    return this.parseAndValidate(content, schema);
   }
-}
+
+  /**
+   * 双核双轨高可用 AI 灾备请求执行器
+   * 
+   * 在 mimoApiKey 配置存在时，将优先请求小米 MIMO API。
+   * 一旦小米 MIMO 平台在运行中抛出网络超时、频控 429、503、API 解析或额度用尽错误，
+   * 系统将以非破坏性方式精准捕获该异常，并打印 WARNING 告警，随后无缝、平滑地将数据流
+   * 熔断降级切换至配置的 OpenRouter 备份接口中进行完美兜底，确保持续可用性。
+   * 
+   * @param schemaName 校验模式名称，主要用于日志追踪与降级标记
+   * @param schema Zod 校验 Schema，用于强约束 AI 响应格式
+   * @param body 请求主体内容，包含模型提示词和约束选项
+   * @returns 成功经过 Zod 检验过滤后的格式化对象，或在所有管道均故障时返回 null
+   */
+  private async executeWithRetry<TSchema extends z.ZodTypeAny>(
+    schemaName: string,
+    schema: TSchema,
+    body: Record<string, unknown>,
+  ): Promise<z.infer<TSchema> | null> {
+    // 1. 如果配置了首选的小米 MIMO API 密钥，则优先执行主请求流
+    if (this.config.mimoApiKey) {
+      try {
+        const result = await this.postToMimo(schemaName, schema, body);
+        if (result !== null) {
+          return result;
+        }
+      } catch (err) {
+        // 捕获小米 MIMO API 的一切抖动、429、503、超时和额度用尽等错误，并开始降级熔断流
+        console.warn(
+          `[ai] [WARNING] 小米 MIMO 优先请求发生异常，正启动熔断灾备，自动切换降级至 OpenRouter。异常详情: ${
+            err instanceof Error ? err.message : String(err)
+          }`
+        );
+      }
+    }
+
+    // 2. 如果未配置小米 MIMO 密钥，或者首选的小米 MIMO 服务发生故障导致熔断，则进入 OpenRouter 备份管道进行兜底
+    if (this.config.openRouterApiKey) {
+      return this.postToOpenRouter(schemaName, schema, body);
+    }
+
+    console.warn("[ai] [WARNING] 当前没有任何可用的 AI 接口配置（小米 MIMO / OpenRouter 均失效或未配置），无法完成请求");
+    return null;
+  }
 
   private heuristicVerify(
     monitor: Pick<MonitorRecord, "name" | "query">,
