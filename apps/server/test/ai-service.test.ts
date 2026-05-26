@@ -18,7 +18,8 @@ describe("AiService 双轨高可用灾备机制测试", () => {
   it("当配置了 mimoApiKey 时，优先调用小米 MIMO 接口，并且成功返回", async () => {
     const mockConfig: AppConfig = {
       mimoApiKey: "mimo_test_key_123",
-      mimoModel: "deepseek-v3",
+      mimoBaseUrl: "https://api.xiaomimimo.com/v1",
+      mimoModel: "MiMo-V2.5-Pro",
       openRouterApiKey: "openrouter_test_key_456",
       openRouterModel: "openai/gpt-4.1-mini",
       openRouterSiteUrl: "http://localhost:5173",
@@ -72,7 +73,8 @@ describe("AiService 双轨高可用灾备机制测试", () => {
   it("当小米 MIMO 接口发生网络超时或 500 等故障时，自动熔断并平滑降级到 OpenRouter 兜底", async () => {
     const mockConfig: AppConfig = {
       mimoApiKey: "mimo_test_key_123",
-      mimoModel: "deepseek-v3",
+      mimoBaseUrl: "https://api.xiaomimimo.com/v1",
+      mimoModel: "MiMo-V2.5-Pro",
       openRouterApiKey: "openrouter_test_key_456",
       openRouterModel: "openai/gpt-4.1-mini",
       openRouterSiteUrl: "http://localhost:5173",
@@ -138,7 +140,8 @@ describe("AiService 双轨高可用灾备机制测试", () => {
       publicUrl: "http://localhost:8787",
       databasePath: "file:./test.db",
       thresholds: { preFilter: 0.2, relevance: 0.4, authenticity: 0.35 },
-      mimoModel: "deepseek-v3", // mimoApiKey 未配置
+      mimoBaseUrl: "https://api.xiaomimimo.com/v1",
+      mimoModel: "MiMo-V2.5-Pro", // mimoApiKey 未配置
     };
 
     const aiService = new AiService(mockConfig);

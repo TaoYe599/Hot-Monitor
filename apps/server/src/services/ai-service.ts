@@ -174,8 +174,12 @@ export class AiService {
     let response: Response;
     let responseText: string | null = null;
 
+    // 动态拼接专属 Base URL，如果 Base URL 末尾有斜杠则剔除，避免重复的双斜杠
+    const normalizedBaseUrl = this.config.mimoBaseUrl.replace(/\/+$/, "");
+    const requestUrl = `${normalizedBaseUrl}/chat/completions`;
+
     try {
-      response = await fetch("https://api.xiaomimimo.com/v1/chat/completions", {
+      response = await fetch(requestUrl, {
         method: "POST",
         headers: {
           "api-key": this.config.mimoApiKey!,
@@ -184,7 +188,7 @@ export class AiService {
         body: bodyStr,
       });
     } catch (err) {
-      throw new Error(`小米 MIMO 网络错误: ${err instanceof Error ? err.message : String(err)}`);
+      throw new Error(`小米 MIMO 网络错误 (请求地址: ${requestUrl}): ${err instanceof Error ? err.message : String(err)}`);
     }
 
     try {
