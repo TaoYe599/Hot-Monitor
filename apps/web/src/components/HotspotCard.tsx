@@ -297,7 +297,20 @@ export function HotspotCard({
           return parts.length > 0 ? parts.join(" · ") : "多源聚合";
         })()}
         <span>·</span>
-        <span>{hotspot.latestPublishedAt ? formatRelativeTime(hotspot.latestPublishedAt) : formatRelativeTime(hotspot.createdAt)}</span>
+        {(() => {
+          const pubTime = hotspot.latestPublishedAt || hotspot.earliestPublishedAt;
+          return pubTime ? (
+            <span title={`原始发布时间: ${new Date(pubTime).toLocaleString()}`}>
+              发布于 {formatRelativeTime(pubTime)}
+            </span>
+          ) : (
+            <span style={{ color: "var(--text-muted)" }}>发布时间未知</span>
+          );
+        })()}
+        <span>·</span>
+        <span title={`系统采集时间: ${new Date(hotspot.createdAt).toLocaleString()}`}>
+          采集于 {formatRelativeTime(hotspot.createdAt)}
+        </span>
       </div>
 
       {/* 标题 */}
