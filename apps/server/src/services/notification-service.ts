@@ -82,6 +82,7 @@ export class NotificationService {
   }
 
   // 通用自定义发信接口，支持向指定订阅人的邮箱路由
+  // 通用自定义发信接口，支持向指定订阅人的邮箱路由（重构为合并抄送 To-Cc 模式）
   async sendCustomEmail(
     recipients: string[],
     subject: string,
@@ -95,31 +96,34 @@ export class NotificationService {
       return;
     }
 
-    for (const target of recipients) {
-      try {
-        await transporter.sendMail({
-          from: settings.smtpFrom,
-          to: target,
-          subject,
-          html: htmlContent,
-        });
+    const targetListStr = recipients.join(",");
+    try {
+      // 执行单次 To-Cc 抄送合并发信，主收件人设为发件人自身，所有的目标邮箱均放在 Cc 中
+      await transporter.sendMail({
+        from: settings.smtpFrom,
+        to: settings.smtpFrom,
+        cc: recipients, // Nodemailer 原生支持传入邮箱字符串数组，自动格式化为抄送列表
+        subject,
+        html: htmlContent,
+      });
 
-        await this.repository.logNotification({
-          channel: "email",
-          target,
-          payload,
-          status: "sent",
-        });
-      } catch (error) {
-        console.error(`[smtp] 邮件投递失败，目标: ${target}`, error);
-        await this.repository.logNotification({
-          channel: "email",
-          target,
-          payload,
-          status: "failed",
-          error: error instanceof Error ? error.message : String(error),
-        });
-      }
+      // 发送成功后，仅向数据库写入一条合并后的成功发送日志， target 为逗号分割的邮箱列表
+      await this.repository.logNotification({
+        channel: "email",
+        target: targetListStr,
+        payload,
+        status: "sent",
+      });
+    } catch (error) {
+      console.error(`[smtp] 邮件合并抄送投递失败，目标列表: ${targetListStr}`, error);
+      // 发送异常时，写入一条合并后的投递失败日志，并完整记录报错原因
+      await this.repository.logNotification({
+        channel: "email",
+        target: targetListStr,
+        payload,
+        status: "failed",
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
