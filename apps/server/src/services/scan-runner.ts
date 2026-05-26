@@ -47,15 +47,6 @@ export class ScanRunner {
     return this.cancelledMonitors.has(monitorId);
   }
 
-  private withinCooldown(monitor: MonitorRecord, publishedAt: string | null): boolean {
-    if (!publishedAt) {
-      return false;
-    }
-    const published = new Date(publishedAt).getTime();
-    const threshold = Date.now() - monitor.cooldownMinutes * 60 * 1000;
-    return published < threshold;
-  }
-
   /**
    * 从多个来源聚合互动数据
    */
@@ -152,16 +143,16 @@ export class ScanRunner {
       .slice(0, 50);
 
     // ============================================================
-    // 时效性滑动时间窗过滤层：剔除发布时间早于 7 天前的陈旧数据，确保生成的全部热点均为近期高新鲜度情报
+    // 时效性滑动时间窗过滤层：剔除发布时间早于 2 天前的陈旧数据，确保生成的全部热点均为近期高新鲜度情报（配合日报高时效性要求）
     // ============================================================
-    const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const twoDaysAgo = Date.now() - 2 * 24 * 60 * 60 * 1000;
     const freshCandidates = candidates.filter((candidate) => {
       if (!candidate.publishedAt) {
         return true; // 缺失发布时间时做宽松容错保留，防止关键源漏掉
       }
       try {
         const publishedTime = new Date(candidate.publishedAt).getTime();
-        return publishedTime >= sevenDaysAgo;
+        return publishedTime >= twoDaysAgo;
       } catch {
         return true; // 时间解析异常时做容错保留
       }
@@ -200,9 +191,6 @@ export class ScanRunner {
       for (const candidate of preFiltered) {
         if (this.isCancelled(monitor.id)) {
           throw new Error("Scan cancelled");
-        }
-        if (this.withinCooldown(monitor, candidate.publishedAt)) {
-          continue;
         }
 
         const existing = await this.repository.getExistingEvent(monitor.id, candidate.url);
