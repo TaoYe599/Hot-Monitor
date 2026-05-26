@@ -24,7 +24,7 @@ for (const envPath of possibleEnvPaths) {
 const envSchema = z.object({
   MIMO_API_KEY: z.string().optional(), // 小米 API Key 凭证（可选，用于主 AI 分析端点）
   MIMO_BASE_URL: z.string().default("https://api.xiaomimimo.com/v1"), // 小米 API 专属 Base URL
-  MIMO_MODEL: z.string().default("MiMo-V2.5-Pro"), // 小米 API 调用的模型名称，默认 MiMo-V2.5-Pro
+  MIMO_MODEL: z.string().default("mimo-v2.5-pro"), // 小米 API 调用的模型名称，默认 mimo-v2.5-pro
   OPENROUTER_API_KEY: z.string().optional(),
   OPENROUTER_MODEL: z.string().default("openai/gpt-4.1-mini"),
   OPENROUTER_SITE_URL: z.string().default("http://localhost:5173"),
