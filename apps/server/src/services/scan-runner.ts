@@ -22,6 +22,43 @@ import { NotificationService } from "./notification-service.js";
 import { Repository } from "./repositories.js";
 import { SourceService } from "./sources.js";
 
+/**
+ * 带有最大并发限制的异步任务处理器（零第三方包依赖，保序且高健壮）
+ * 
+ * 使用 Worker 协程池思想在内存中保序流转，能优雅防范外部请求超限 429 错误
+ * 
+ * @param items 输入的任务源数组
+ * @param limit 最大并发数限制
+ * @param fn 每个项的具体处理函数（返回 Promise）
+ */
+async function runWithConcurrencyLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let index = 0;
+
+  async function worker() {
+    while (index < items.length) {
+      const currentIndex = index++;
+      const item = items[currentIndex];
+      try {
+        results[currentIndex] = await fn(item);
+      } catch (err) {
+        // 捕获任务中的错误，避免中断其他正在并发的任务管道
+        console.error(`[scan] [ERROR] 并发研判任务处理失败 (索引: ${currentIndex}):`, err);
+        throw err;
+      }
+    }
+  }
+
+  // 启动并发 Worker 协程
+  const workers = Array.from({ length: Math.min(limit, items.length) }, () => worker());
+  await Promise.all(workers);
+  return results;
+}
+
 export class ScanRunner {
   private readonly cancelledMonitors = new Set<number>();
 
@@ -187,7 +224,12 @@ export class ScanRunner {
     const hotspots: HotspotCluster[] = [];
 
     if (preFiltered.length > 0) {
-      // Step 1: 对每个候选进行 AI 验证，创建 individual events
+      // Step 1: 异步并发 AI 验证。为了彻底解决串行研判导致的时间堆积，我们在此将管线重构为两阶段并发流：
+      
+      // ==========================================
+      // 阶段 A：过滤识别出真正需要进行物理 AI 接口研判的候选
+      // ==========================================
+      const candidatesToProcess: SourceItem[] = [];
       for (const candidate of preFiltered) {
         if (this.isCancelled(monitor.id)) {
           throw new Error("Scan cancelled");
@@ -199,13 +241,23 @@ export class ScanRunner {
           candidate.existingEvent = { id: existing.id };
           continue;
         }
+        candidatesToProcess.push(candidate);
+      }
+
+      // ==========================================
+      // 阶段 B：启动并发限流研判（将最大并发路数严格锁定为 3，确保速度的同时绝对不触及 API 429 频控限制）
+      // ==========================================
+      await runWithConcurrencyLimit(candidatesToProcess, 3, async (candidate) => {
+        if (this.isCancelled(monitor.id)) {
+          throw new Error("Scan cancelled");
+        }
 
         const verdict = await this.aiService.verifyKeywordCandidate(monitor, candidate);
         if (!verdict.isMatch) {
           console.info(
             `[scan] rejected: "${candidate.title.slice(0, 60)}" | relevance=${verdict.relevanceScore} auth=${verdict.authenticityScore} reason=${verdict.reason.slice(0, 80)}`,
           );
-          continue;
+          return;
         }
 
         console.info(
@@ -241,7 +293,7 @@ export class ScanRunner {
           createdAt: nowIso(),
           payload: created,
         });
-      }
+      });
 
       // Step 2: AI 热点聚类（不创建重复 events）
       if (this.isCancelled(monitor.id)) {
