@@ -68,6 +68,10 @@ describe("AiService 双轨高可用灾备机制测试", () => {
     const [calledUrl, calledInit] = fetchSpy.mock.calls[0];
     expect(calledUrl).toBe("https://api.xiaomimimo.com/v1/chat/completions");
     expect((calledInit?.headers as Record<string, string>)["api-key"]).toBe("mimo_test_key_123");
+
+    // 确保绝对不向小米 API 传递 response_format，以杜绝 400 Param Incorrect 兼容错误
+    const calledBody = JSON.parse(calledInit?.body as string);
+    expect(calledBody.response_format).toBeUndefined();
   });
 
   it("当小米 MIMO 接口发生网络超时或 500 等故障时，自动熔断并平滑降级到 OpenRouter 兜底", async () => {
@@ -126,6 +130,11 @@ describe("AiService 双轨高可用灾备机制测试", () => {
     const callUrls = fetchSpy.mock.calls.map(([url]) => url);
     expect(callUrls[0]).toBe("https://api.xiaomimimo.com/v1/chat/completions");
     expect(callUrls[1]).toBe("https://openrouter.ai/api/v1/chat/completions");
+
+    // 验证第一阶段的小米请求中 response_format 被解构剔除，但第二阶段的 OpenRouter 中 response_format 依然保留以进行强校验
+    const callBodies = fetchSpy.mock.calls.map(([_, init]) => JSON.parse(init?.body as string));
+    expect(callBodies[0].response_format).toBeUndefined();
+    expect(callBodies[1].response_format).toEqual({ type: "json_object" });
   });
 
   it("当未配置 mimoApiKey 时，跳过小米 MIMO，直接进入 OpenRouter 通道", async () => {

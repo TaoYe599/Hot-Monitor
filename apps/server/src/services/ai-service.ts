@@ -163,9 +163,13 @@ export class AiService {
     attempt = 1,
     maxRetries = 3,
   ): Promise<z.infer<TSchema> | null> {
-    // 覆盖配置模型为小米 MIMO 平台指定的模型（如 deepseek-v3）
+    // 覆盖配置模型为小米 MIMO 平台指定的模型（如 deepseek-v3 / MiMo-V2.5-Pro）
+    // 注意：部分中转或国内模型不支持 response_format: { type: "json_object" } 字段，直接传入会导致 400 Param Incorrect 错误。
+    // 我们在这里使用解构赋值剔除 response_format，只传递 messages 等标准主体，
+    // 底层的 parseAndValidate 具备高度弹性的正则提取逻辑，即使模型带有 Markdown 块返回也能稳健提取。
+    const { response_format, ...restBody } = body;
     const mimoBody = {
-      ...body,
+      ...restBody,
       model: this.config.mimoModel,
     };
     const bodyStr = JSON.stringify(mimoBody);
