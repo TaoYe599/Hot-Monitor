@@ -18,6 +18,7 @@ const SOURCE_LABELS: Record<SourceKind, string> = {
   weibo: "微博",
   reddit: "Reddit",
   manual: "手动",
+  bing: "必应",
 };
 
 // 来源图标（低饱和度单色 Unicode/svg）
@@ -33,6 +34,7 @@ const SOURCE_ICONS: Record<SourceKind, string> = {
   rss: "📰",
   search: "🔍",
   manual: "✎",
+  bing: "必",
 };
 
 // 从 URL 解析来源类型

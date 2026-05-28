@@ -22,6 +22,7 @@ const SOURCE_LABELS: Record<SourceKind, string> = {
   weibo: "微博",
   reddit: "Reddit",
   manual: "手动",
+  bing: "必应",
 };
 
 // 格式化数字（超过1000显示为K）

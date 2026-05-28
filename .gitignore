@@ -13,3 +13,4 @@ apps/server/tmp
 Thumbs.db
 *.db
 *.db-journal
+logs/

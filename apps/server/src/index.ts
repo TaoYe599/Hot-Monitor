@@ -1,3 +1,4 @@
+import "./lib/logger.js";
 import "dotenv/config";
 
 // Detect Windows system proxy and set env vars before bootstrapping global-agent

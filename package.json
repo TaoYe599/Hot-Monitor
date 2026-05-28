@@ -8,6 +8,7 @@
     "dev:server": "pnpm --filter @hot-monitor/server dev",
     "dev:web": "pnpm --filter @hot-monitor/web dev",
     "build": "pnpm -r build",
+    "start": "node apps/server/dist/index.js",
     "test": "pnpm -r test",
     "test:api": "tsx test/api-smoke.ts",
     "typecheck": "pnpm -r typecheck",
