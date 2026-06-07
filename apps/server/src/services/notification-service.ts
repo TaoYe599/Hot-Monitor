@@ -35,6 +35,7 @@ interface DigestQualityResult {
 const DIGEST_HEURISTIC_RATIO_LIMIT = 0.4;
 const DIGEST_RAW_TOP_HEURISTIC_RATIO_LIMIT = 0.5;
 const DIGEST_MIN_CHINESE_RATIO_FOR_MIXED_HEURISTIC = 0.15;
+const DIGEST_DETAIL_HOTSPOT_LIMIT = 8;
 
 function createTransporter(settings: SettingsRecord): Transporter | null {
   if (!settings.smtpHost || !settings.smtpPort || !settings.smtpFrom) {
@@ -62,6 +63,44 @@ function computeChineseRatio(text: string): number {
 
   const chineseChars = meaningfulChars.filter((char) => /\p{Script=Han}/u.test(char));
   return chineseChars.length / meaningfulChars.length;
+}
+
+function formatDigestDate(date: Date): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+    timeZone: "Asia/Shanghai",
+  }).format(date);
+}
+
+function formatDigestDateTime(value: string | null | undefined): string {
+  if (!value) {
+    return "时间未知";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "时间未知";
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Shanghai",
+  }).format(date);
+}
+
+function getHotspotDisplayTime(hotspot: DigestHotspot): string {
+  return formatDigestDateTime(
+    hotspot.latestPublishedAt ||
+      hotspot.events?.[0]?.publishedAt ||
+      hotspot.createdAt,
+  );
 }
 
 export class NotificationService {
@@ -770,6 +809,17 @@ export class NotificationService {
     // 对热点进行分值降序排列，做 TOP 3 高能排行榜
     const sortedHotspots = this.sortDigestHotspotsForEmail(hotspots);
     const top3 = sortedHotspots.filter((h) => !h.isHeuristic).slice(0, 3);
+    const top3Ids = new Set(top3.map((h) => h.id));
+    const detailHotspots = sortedHotspots
+      .filter((h) => !top3Ids.has(h.id))
+      .slice(0, DIGEST_DETAIL_HOTSPOT_LIMIT);
+    const reportEnd = new Date();
+    const reportStart = new Date(
+      reportEnd.getTime() - (rule.deliveryFrequency === "weekly" ? 7 * 24 : 24) * 60 * 60 * 1000,
+    );
+    const reportDate = formatDigestDate(reportEnd);
+    const reportWindow = `${formatDigestDateTime(reportStart.toISOString())} - ${formatDigestDateTime(reportEnd.toISOString())}`;
+    const visibleHotspotCount = top3.length + detailHotspots.length;
 
     return `
 <!DOCTYPE html>
@@ -804,10 +854,10 @@ export class NotificationService {
                 </tr>
               </table>
               <h2 style="margin: 16px 0 0 0; font-size: 22px; font-weight: 700; color: #08111f; line-height: 1.4; letter-spacing: -0.01em;">
-                ${rule.name} 汇总洞察
+                ${rule.name} 日报 · ${reportDate}
               </h2>
-              <p style="margin: 8px 0 0 0; font-size: 13px; color: #64748b;">
-                简报周期：过去 ${rule.deliveryFrequency === "weekly" ? "7 天" : "24 小时"}
+              <p style="margin: 8px 0 0 0; font-size: 13px; color: #64748b; line-height: 1.6;">
+                统计区间：${reportWindow} · 精选展示 ${visibleHotspotCount} / ${hotspots.length} 项热点
               </p>
             </td>
           </tr>
@@ -819,7 +869,7 @@ export class NotificationService {
                 <tr>
                   <td>
                     <p style="margin: 0; font-size: 13px; color: #475569; line-height: 1.6;">
-                      📊 <strong>本期情报速递</strong>：本期已为您自动匹配并深度聚合出 <span style="color: #ef4444; font-weight: 700;">${hotspots.length} 项</span> 核心情报热点，深度关联来自各大社交媒体、技术社区及官方博客的 <span style="color: #08111f; font-weight: 700;">${totalSources} 个</span> 可信原始信源。
+                      📊 <strong>本期情报速递</strong>：本期共匹配 <span style="color: #ef4444; font-weight: 700;">${hotspots.length} 项</span> 热点，精选展示 <span style="color: #08111f; font-weight: 700;">${visibleHotspotCount} 项</span>，关联 <span style="color: #08111f; font-weight: 700;">${totalSources} 个</span> 原始信源。
                     </p>
                   </td>
                 </tr>
@@ -855,6 +905,7 @@ export class NotificationService {
       }
       const tagColor = trustScore >= 0.95 ? "#10b981" : trustScore >= 0.8 ? "#0284c7" : trustScore >= 0.7 ? "#d97706" : "#64748b";
       const tagBg = trustScore >= 0.95 ? "#ecfdf5" : trustScore >= 0.8 ? "#e0f2fe" : trustScore >= 0.7 ? "#fef3c7" : "#f1f5f9";
+      const displayTime = getHotspotDisplayTime(h);
 
       return `
                 <tr>
@@ -874,6 +925,9 @@ export class NotificationService {
                           <div style="font-size: 12px; font-weight: normal; color: #475569; margin-top: 6px; line-height: 1.5;">
                             ${h.summary}
                           </div>
+                          <div style="font-size: 11px; font-weight: normal; color: #64748b; margin-top: 6px; line-height: 1.4;">
+                            最新时间：${displayTime}
+                          </div>
                         </td>
                         <td width="60" align="right" style="font-size: 13px; font-weight: 700; color: ${textColors[index] || "#475569"}; vertical-align: top; padding-top: 2px;">
                           ${Math.round(h.score * 100)}% 热度
@@ -890,17 +944,18 @@ export class NotificationService {
           <!-- 详细主题卡片流 -->
           <tr>
             <td style="padding: 30px; background-color: #ffffff;">
-              <h3 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 700; color: #08111f; text-transform: uppercase; letter-spacing: 0.05em;">📂 本期热点聚类详情</h3>
+              <h3 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 700; color: #08111f; text-transform: uppercase; letter-spacing: 0.05em;">📂 其他值得关注</h3>
               
-              ${hotspots.length === 0 ? `
+              ${detailHotspots.length === 0 ? `
                 <div style="padding: 30px; text-align: center; border: 1px dashed rgba(8,17,31,0.12); border-radius: 16px; background-color: #fafbfc;">
                   <span style="font-size: 24px;">💡</span>
                   <p style="margin: 8px 0 0 0; font-size: 13px; color: #64748b;">本时段未产生超出过滤条件的新热点信号。</p>
                 </div>
-              ` : hotspots.map((h, idx) => {
+              ` : detailHotspots.map((h, idx) => {
       const targetUrl = h.events?.[0]?.sourceUrl || h.supportingUrls?.[0] || "#";
+      const displayTime = getHotspotDisplayTime(h);
       return `
-                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: ${idx === hotspots.length - 1 ? "0" : "24px"}; border-radius: 14px; border: 1px solid rgba(8, 17, 31, 0.06); background-color: #fafbfc; overflow: hidden; border-collapse: separate;">
+                <table width="100%" border="0" cellspacing="0" cellpadding="0" style="margin-bottom: ${idx === detailHotspots.length - 1 ? "0" : "18px"}; border-radius: 14px; border: 1px solid rgba(8, 17, 31, 0.06); background-color: #fafbfc; overflow: hidden; border-collapse: separate;">
                   <tr>
                     <td style="padding: 16px 20px; border-bottom: 1px solid rgba(8, 17, 31, 0.05); background-color: #ffffff;">
                       <table width="100%" border="0" cellspacing="0" cellpadding="0">
@@ -919,6 +974,7 @@ export class NotificationService {
                   </tr>
                   <tr>
                     <td style="padding: 16px 20px; font-size: 13px; color: #475569; line-height: 1.6; background-color: #fafbfc;">
+                      <div style="font-size: 11px; color: #64748b; margin-bottom: 8px;">最新时间：${displayTime}</div>
                       ${h.summary}
                       
                       <!-- 关联事件摘要 -->
