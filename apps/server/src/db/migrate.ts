@@ -111,7 +111,16 @@ const statements = [
       rule_id INTEGER NOT NULL,
       hotspot_id INTEGER NOT NULL,
       created_at TEXT NOT NULL
-    )`
+    )`,
+  `CREATE TABLE IF NOT EXISTS digest_sent_sources (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      rule_id INTEGER NOT NULL,
+      hotspot_id INTEGER NOT NULL,
+      source_url TEXT NOT NULL,
+      sent_at TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`,
+  "CREATE UNIQUE INDEX IF NOT EXISTS digest_sent_sources_rule_source_sent_idx ON digest_sent_sources (rule_id, source_url, sent_at)"
 ];
 
 export async function migrateDatabase(client: Client): Promise<void> {

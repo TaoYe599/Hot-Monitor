@@ -33,6 +33,7 @@ import {
   subscriptionRulesTable,
   subscriptionCooldownsTable,
   subscriptionSilentQueueTable,
+  digestSentSourcesTable,
 } from "../db/schema.js";
 
 type DbClient = ReturnType<
@@ -782,6 +783,52 @@ export class Repository {
     }
   }
 
+  async listRecentDigestSourceUrls(ruleId: number, sinceIso: string): Promise<Set<string>> {
+    const result = await this.db
+      .select({ sourceUrl: digestSentSourcesTable.sourceUrl })
+      .from(digestSentSourcesTable)
+      .where(
+        and(
+          eq(digestSentSourcesTable.ruleId, ruleId),
+          gte(digestSentSourcesTable.sentAt, sinceIso),
+        ),
+      );
+
+    return new Set(result.map((row) => row.sourceUrl));
+  }
+
+  async recordDigestSentSources(
+    ruleId: number,
+    items: { hotspotId: number; sourceUrls: string[] }[],
+    sentAt = nowIso(),
+  ): Promise<void> {
+    const seen = new Set<string>();
+    const rows = [];
+
+    for (const item of items) {
+      for (const sourceUrl of item.sourceUrls) {
+        if (seen.has(sourceUrl)) {
+          continue;
+        }
+
+        seen.add(sourceUrl);
+        rows.push({
+          ruleId,
+          hotspotId: item.hotspotId,
+          sourceUrl,
+          sentAt,
+          createdAt: sentAt,
+        });
+      }
+    }
+
+    if (rows.length === 0) {
+      return;
+    }
+
+    await this.db.insert(digestSentSourcesTable).values(rows);
+  }
+
   async getHotspot(id: number): Promise<HotspotCluster | undefined> {
     const result = await this.db
       .select()
@@ -872,9 +919,11 @@ export class Repository {
   async cleanupOldData(eventRetentionDays: number, hotspotRetentionDays: number): Promise<{ deletedEvents: number; deletedHotspots: number }> {
     const eventThreshold = new Date(Date.now() - eventRetentionDays * 24 * 60 * 60 * 1000).toISOString();
     const hotspotThreshold = new Date(Date.now() - hotspotRetentionDays * 24 * 60 * 60 * 1000).toISOString();
+    const digestSentSourceThreshold = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
     const deletedEvents = await this.db.delete(eventsTable).where(lte(eventsTable.createdAt, eventThreshold));
     const deletedHotspots = await this.db.delete(hotspotsTable).where(lte(hotspotsTable.createdAt, hotspotThreshold));
+    await this.db.delete(digestSentSourcesTable).where(lte(digestSentSourcesTable.sentAt, digestSentSourceThreshold));
 
     return {
       deletedEvents: deletedEvents.rowsAffected,

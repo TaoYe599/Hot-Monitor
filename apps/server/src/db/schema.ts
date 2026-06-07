@@ -151,3 +151,22 @@ export const subscriptionSilentQueueTable = sqliteTable("subscription_silent_que
   createdAt: text("created_at").notNull(),
 });
 
+export const digestSentSourcesTable = sqliteTable(
+  "digest_sent_sources",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    ruleId: integer("rule_id").notNull(),
+    hotspotId: integer("hotspot_id").notNull(),
+    sourceUrl: text("source_url").notNull(),
+    sentAt: text("sent_at").notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => ({
+    ruleSourceSentIdx: uniqueIndex("digest_sent_sources_rule_source_sent_idx").on(
+      table.ruleId,
+      table.sourceUrl,
+      table.sentAt,
+    ),
+  }),
+);
+

@@ -8,6 +8,18 @@ import { NotificationService } from "./notification-service.js";
 import { hotspotsTable } from "../db/schema.js";
 
 const SERVER_START_TIME = Date.now();
+const DAILY_DIGEST_LOOKBACK_HOURS = 48;
+const DIGEST_SOURCE_DEDUPE_DAYS = 7;
+
+function getHotspotLatestTimeMs(hotspot: { latestPublishedAt?: string | null; createdAt: string }): number {
+  const sourceTime = hotspot.latestPublishedAt ? new Date(hotspot.latestPublishedAt).getTime() : NaN;
+  if (!Number.isNaN(sourceTime)) {
+    return sourceTime;
+  }
+
+  const createdTime = new Date(hotspot.createdAt).getTime();
+  return Number.isNaN(createdTime) ? 0 : createdTime;
+}
 
 export class MonitorScheduler {
   private timer: NodeJS.Timeout | null = null;
@@ -167,8 +179,13 @@ export class MonitorScheduler {
 
       try {
         // 计算数据提取起止时间
-        const intervalHours = rule.deliveryFrequency === "weekly" ? 7 * 24 : 24;
+        const intervalHours = rule.deliveryFrequency === "weekly" ? 7 * 24 : DAILY_DIGEST_LOOKBACK_HOURS;
         const timeFromDate = new Date(Date.now() - intervalHours * 60 * 60 * 1000);
+        const recentDigestSources = await this.repository.listRecentDigestSourceUrls(
+          rule.id,
+          new Date(Date.now() - DIGEST_SOURCE_DEDUPE_DAYS * 24 * 60 * 60 * 1000).toISOString(),
+        );
+        const selectedDigestSources = new Set<string>();
 
         // 调用 Repository 查询指定时间段内产生的所有热点
         const { hotspots } = await this.repository.listHotspots(100, undefined, {
@@ -179,11 +196,28 @@ export class MonitorScheduler {
         // 匹配过滤热点列表，保留满足该规则全部过滤条件的热点
         const matchedHotspots = [];
         for (const h of hotspots) {
+          if (getHotspotLatestTimeMs(h) < timeFromDate.getTime()) {
+            continue;
+          }
+
+          const primarySourceUrl = h.supportingUrls[0];
+          if (primarySourceUrl && recentDigestSources.has(primarySourceUrl)) {
+            console.info(`[digest-dedupe] rule ${rule.id} skipped hotspot ${h.id}: source already sent in last ${DIGEST_SOURCE_DEDUPE_DAYS} days`);
+            continue;
+          }
+
+          const hasSelectedSource = h.supportingUrls.some((url) => selectedDigestSources.has(url));
+          if (hasSelectedSource) {
+            console.info(`[digest-dedupe] rule ${rule.id} skipped hotspot ${h.id}: source already selected in current digest`);
+            continue;
+          }
+
           const isMatch = await this.notificationService.matchSubscriptionRule(h, rule);
           if (isMatch) {
             // 获取每个热点的事件摘要进行丰富
             const events = await this.repository.getEventsByClusterId(h.id);
             matchedHotspots.push({ ...h, events });
+            h.supportingUrls.forEach((url) => selectedDigestSources.add(url));
           }
         }
 
@@ -242,6 +276,13 @@ export class MonitorScheduler {
             ruleId: rule.id,
             count: matchedHotspots.length,
           });
+          await this.repository.recordDigestSentSources(
+            rule.id,
+            matchedHotspots.map((hotspot) => ({
+              hotspotId: hotspot.id,
+              sourceUrls: hotspot.supportingUrls,
+            })),
+          );
         }
 
         // 更新投递时间戳
