@@ -19,10 +19,14 @@ export class ScanJobService {
   private readonly jobs = new Map<string, ScanJobRecord>();
   private readonly activeByMonitorId = new Map<number, string>();
   private readonly jobOrder: string[] = [];
+  private readonly pendingJobIds: string[] = [];
+  private readonly monitorsByJobId = new Map<string, MonitorRecord>();
+  private runningCount = 0;
 
   constructor(
     private readonly runner: ScanRunner,
     private readonly bus: LiveEventBus,
+    private readonly maxConcurrentJobs = 2,
   ) {}
 
   enqueue(monitor: MonitorRecord, trigger: ScanJobTrigger): ScanJobRecord {
@@ -48,6 +52,7 @@ export class ScanJobService {
     };
 
     this.jobs.set(job.id, job);
+    this.monitorsByJobId.set(job.id, monitor);
     this.jobOrder.unshift(job.id);
     this.activeByMonitorId.set(monitor.id, job.id);
     this.trimHistory();
@@ -57,9 +62,8 @@ export class ScanJobService {
       `[scan-job] queued ${job.id} for monitor ${monitor.id} (${monitor.query}) via ${trigger}`,
     );
 
-    queueMicrotask(() => {
-      void this.runJob(job.id, monitor);
-    });
+    this.pendingJobIds.push(job.id);
+    this.scheduleNextJobs();
 
     return job;
   }
@@ -85,10 +89,45 @@ export class ScanJobService {
     }
     job.status = "cancelled";
     job.finishedAt = nowIso();
+    const pendingIndex = this.pendingJobIds.indexOf(job.id);
+    if (pendingIndex >= 0) {
+      this.pendingJobIds.splice(pendingIndex, 1);
+      this.monitorsByJobId.delete(job.id);
+    }
     this.publish(job);
     this.runner.cancel(job.monitorId);
     console.info(`[scan-job] cancelled ${job.id} for monitor ${job.monitorId}`);
+    this.scheduleNextJobs();
     return true;
+  }
+
+  private scheduleNextJobs(): void {
+    while (this.runningCount < this.maxConcurrentJobs && this.pendingJobIds.length > 0) {
+      const jobId = this.pendingJobIds.shift();
+      if (!jobId) {
+        continue;
+      }
+
+      const job = this.jobs.get(jobId);
+      if (!job || job.status !== "queued") {
+        continue;
+      }
+
+      const monitor = this.monitorsByJobId.get(jobId);
+      if (!monitor) {
+        job.status = "failed";
+        job.finishedAt = nowIso();
+        job.error = `Monitor ${job.monitorId} not found for scan job`;
+        this.publish(job);
+        this.activeByMonitorId.delete(job.monitorId);
+        continue;
+      }
+
+      queueMicrotask(() => {
+        void this.runJob(jobId, monitor);
+      });
+      this.runningCount++;
+    }
   }
 
   private publish(job: ScanJobRecord): void {
@@ -105,6 +144,7 @@ export class ScanJobService {
       const removedId = this.jobOrder.pop();
       if (removedId) {
         this.jobs.delete(removedId);
+        this.monitorsByJobId.delete(removedId);
       }
     }
   }
@@ -112,6 +152,8 @@ export class ScanJobService {
   private async runJob(jobId: string, monitor: MonitorRecord): Promise<void> {
     const queued = this.jobs.get(jobId);
     if (!queued) {
+      this.runningCount = Math.max(0, this.runningCount - 1);
+      this.scheduleNextJobs();
       return;
     }
 
@@ -141,6 +183,9 @@ export class ScanJobService {
       }
     } finally {
       this.activeByMonitorId.delete(monitor.id);
+      this.monitorsByJobId.delete(jobId);
+      this.runningCount = Math.max(0, this.runningCount - 1);
+      this.scheduleNextJobs();
     }
   }
 }

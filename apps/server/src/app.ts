@@ -98,6 +98,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const repository = options.services?.repository ?? new Repository(connection.db, config);
   const sourceService = options.services?.sourceService ?? new SourceService(config);
   const aiService = options.services?.aiService ?? new AiService(config);
+  void aiService.refreshOpenRouterHealth().catch((error) => {
+    console.error(`[health] OpenRouter health check failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
   const notificationService =
     options.services?.notificationService ?? new NotificationService(repository, config, bus);
   const runner =
@@ -143,6 +146,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     ok: true,
     port: config.port,
     publicUrl: config.publicUrl,
+    ai: aiService.getProviderHealth(),
   }));
 
   app.get("/api/dashboard", async () => repository.getDashboardSnapshot());

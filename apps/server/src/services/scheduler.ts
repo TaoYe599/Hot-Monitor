@@ -212,6 +212,30 @@ export class MonitorScheduler {
           });
         } else {
           // 正常发信，渲染多卡流简报
+          const quality = this.notificationService.evaluatePeriodicDigestQuality(matchedHotspots);
+          if (!quality.ok) {
+            console.warn(
+              `[digest-quality] Blocked digest for rule ${rule.name} (${rule.id}): ${quality.reasons.join("; ")}`,
+            );
+            const blockedSubject = `[质量门禁] Hot Monitor 日报暂缓发送: ${rule.name}`;
+            const blockedHtml = this.notificationService.renderDigestQualityBlockedEmail(
+              rule,
+              quality,
+              matchedHotspots.length,
+            );
+            await this.notificationService.sendCustomEmail(rule.recipients, blockedSubject, blockedHtml, settings, {
+              kind: "subscription_digest_quality_blocked",
+              ruleId: rule.id,
+              count: matchedHotspots.length,
+              reasons: quality.reasons,
+              heuristicRatio: quality.heuristicRatio,
+              rawTopHeuristicRatio: quality.rawTopHeuristicRatio,
+              chineseRatio: quality.chineseRatio,
+            });
+            await this.repository.updateSubscriptionRule(rule.id, { lastDispatchedAt: nowIso() });
+            continue;
+          }
+
           const htmlContent = this.notificationService.renderPeriodicDigestEmail(matchedHotspots, rule, false);
           await this.notificationService.sendCustomEmail(rule.recipients, subject, htmlContent, settings, {
             kind: "subscription_digest",

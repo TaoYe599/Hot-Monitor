@@ -22,6 +22,20 @@ interface NotificationEnvelope {
   payload: Record<string, unknown>;
 }
 
+type DigestHotspot = HotspotCluster & { events: HotspotEventSummary[] };
+
+interface DigestQualityResult {
+  ok: boolean;
+  reasons: string[];
+  heuristicRatio: number;
+  rawTopHeuristicRatio: number;
+  chineseRatio: number;
+}
+
+const DIGEST_HEURISTIC_RATIO_LIMIT = 0.4;
+const DIGEST_RAW_TOP_HEURISTIC_RATIO_LIMIT = 0.5;
+const DIGEST_MIN_CHINESE_RATIO_FOR_MIXED_HEURISTIC = 0.15;
+
 function createTransporter(settings: SettingsRecord): Transporter | null {
   if (!settings.smtpHost || !settings.smtpPort || !settings.smtpFrom) {
     return null;
@@ -38,6 +52,16 @@ function createTransporter(settings: SettingsRecord): Transporter | null {
       }
       : undefined,
   });
+}
+
+function computeChineseRatio(text: string): number {
+  const meaningfulChars = Array.from(text).filter((char) => /[\p{L}\p{N}]/u.test(char));
+  if (meaningfulChars.length === 0) {
+    return 1;
+  }
+
+  const chineseChars = meaningfulChars.filter((char) => /\p{Script=Han}/u.test(char));
+  return chineseChars.length / meaningfulChars.length;
 }
 
 export class NotificationService {
@@ -494,7 +518,7 @@ export class NotificationService {
     isEvolution = false,
     events: import("@hot-monitor/shared").HotspotEventSummary[] = [],
   ): string {
-    const feedbackBaseUrl = this.config.publicUrl || "http://127.0.0.1:8787";
+    const feedbackBaseUrl = this.config.publicUrl || "http://127.0.0.1:3001";
     const settingsUrl = `${feedbackBaseUrl}/settings`;
     const yesFeedback = `${feedbackBaseUrl}/api/feedback?hotspotId=${hotspot.id}&ruleId=${rule.id}&verdict=relevant`;
     const noFeedback = `${feedbackBaseUrl}/api/feedback?hotspotId=${hotspot.id}&ruleId=${rule.id}&verdict=irrelevant`;
@@ -664,19 +688,88 @@ export class NotificationService {
   }
 
   // 渲染周期简报 HTML 邮件模板
+  sortDigestHotspotsForEmail(hotspots: DigestHotspot[]): DigestHotspot[] {
+    return [...hotspots].sort((a, b) => {
+      if (a.isHeuristic !== b.isHeuristic) {
+        return a.isHeuristic ? 1 : -1;
+      }
+      return b.score - a.score;
+    });
+  }
+
+  evaluatePeriodicDigestQuality(hotspots: DigestHotspot[]): DigestQualityResult {
+    if (hotspots.length === 0) {
+      return {
+        ok: true,
+        reasons: [],
+        heuristicRatio: 0,
+        rawTopHeuristicRatio: 0,
+        chineseRatio: 1,
+      };
+    }
+
+    const heuristicCount = hotspots.filter((h) => h.isHeuristic).length;
+    const rawTop3 = [...hotspots].sort((a, b) => b.score - a.score).slice(0, 3);
+    const rawTopHeuristicCount = rawTop3.filter((h) => h.isHeuristic).length;
+    const heuristicRatio = heuristicCount / hotspots.length;
+    const rawTopHeuristicRatio = rawTop3.length > 0 ? rawTopHeuristicCount / rawTop3.length : 0;
+    const chineseRatio = computeChineseRatio(
+      hotspots.map((h) => `${h.label}\n${h.summary}`).join("\n"),
+    );
+
+    const reasons: string[] = [];
+    if (heuristicRatio > DIGEST_HEURISTIC_RATIO_LIMIT) {
+      reasons.push(`heuristic ratio ${(heuristicRatio * 100).toFixed(0)}% exceeds ${(DIGEST_HEURISTIC_RATIO_LIMIT * 100).toFixed(0)}%`);
+    }
+    if (rawTopHeuristicRatio > DIGEST_RAW_TOP_HEURISTIC_RATIO_LIMIT) {
+      reasons.push(`raw top-3 heuristic ratio ${(rawTopHeuristicRatio * 100).toFixed(0)}% exceeds ${(DIGEST_RAW_TOP_HEURISTIC_RATIO_LIMIT * 100).toFixed(0)}%`);
+    }
+    if (heuristicRatio > 0 && chineseRatio < DIGEST_MIN_CHINESE_RATIO_FOR_MIXED_HEURISTIC) {
+      reasons.push(`Chinese text ratio ${(chineseRatio * 100).toFixed(0)}% is below ${(DIGEST_MIN_CHINESE_RATIO_FOR_MIXED_HEURISTIC * 100).toFixed(0)}%`);
+    }
+
+    return {
+      ok: reasons.length === 0,
+      reasons,
+      heuristicRatio,
+      rawTopHeuristicRatio,
+      chineseRatio,
+    };
+  }
+
+  renderDigestQualityBlockedEmail(
+    rule: SubscriptionRuleRecord,
+    quality: DigestQualityResult,
+    matchedCount: number,
+  ): string {
+    const reasons = quality.reasons.map((reason) => `<li>${reason}</li>`).join("");
+    return `
+      <div style="padding:30px; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif; max-width:640px; margin:auto; background-color:#ffffff; border-radius:16px; border:1px solid rgba(8,17,31,0.08);">
+        <h2 style="margin:0 0 12px 0; font-size:18px; color:#08111f;">${rule.name} 日报已暂缓发送</h2>
+        <p style="margin:0 0 14px 0; font-size:14px; line-height:1.7; color:#475569;">
+          系统检测到本期命中的 ${matchedCount} 个热点中降级生成内容占比过高，可能导致英文原文或低质量内容进入日报，因此已阻止完整日报发送。
+        </p>
+        <ul style="margin:0 0 16px 20px; padding:0; font-size:13px; line-height:1.7; color:#64748b;">${reasons}</ul>
+        <p style="margin:0; font-size:12px; line-height:1.6; color:#94a3b8;">
+          请检查 AI 接口健康状态，待聚类服务恢复后重新触发扫描或等待下一次日报。
+        </p>
+      </div>
+    `;
+  }
+
   renderPeriodicDigestEmail(
-    hotspots: (HotspotCluster & { events: HotspotEventSummary[] })[],
+    hotspots: DigestHotspot[],
     rule: SubscriptionRuleRecord,
     isNightSilent = false,
   ): string {
-    const feedbackBaseUrl = this.config.publicUrl || "http://127.0.0.1:8787";
+    const feedbackBaseUrl = this.config.publicUrl || "http://127.0.0.1:3001";
     const settingsUrl = `${feedbackBaseUrl}/settings`;
 
     const totalSources = hotspots.reduce((acc, h) => acc + h.supportingUrls.length, 0);
 
     // 对热点进行分值降序排列，做 TOP 3 高能排行榜
-    const sortedHotspots = [...hotspots].sort((a, b) => b.score - a.score);
-    const top3 = sortedHotspots.slice(0, 3);
+    const sortedHotspots = this.sortDigestHotspotsForEmail(hotspots);
+    const top3 = sortedHotspots.filter((h) => !h.isHeuristic).slice(0, 3);
 
     return `
 <!DOCTYPE html>

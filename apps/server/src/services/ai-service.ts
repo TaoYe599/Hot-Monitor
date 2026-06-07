@@ -81,8 +81,126 @@ const discoverHotspotsSchema = z.object({
   ),
 });
 
+interface ProviderHealth {
+  configured: boolean;
+  available: boolean;
+  lastCheckedAt: string | null;
+  lastError: string | null;
+  lastStatus: number | null;
+}
+
+function extractHttpErrorDetail(responseText: string | null): string {
+  if (!responseText) {
+    return "";
+  }
+
+  try {
+    const errorPayload = JSON.parse(responseText) as {
+      error?: { message?: string; code?: string };
+      message?: string;
+    };
+    return errorPayload.error?.message || errorPayload.message || "";
+  } catch {
+    return responseText;
+  }
+}
+
 export class AiService {
-  constructor(private readonly config: AppConfig) {}
+  private readonly maxConcurrentAiRequests = 2;
+  private activeAiRequests = 0;
+  private readonly aiRequestWaiters: Array<() => void> = [];
+  private openRouterHealth: ProviderHealth = {
+    configured: false,
+    available: false,
+    lastCheckedAt: null,
+    lastError: null,
+    lastStatus: null,
+  };
+
+  constructor(private readonly config: AppConfig) {
+    this.openRouterHealth = {
+      ...this.openRouterHealth,
+      configured: Boolean(this.config.openRouterApiKey),
+      available: Boolean(this.config.openRouterApiKey),
+    };
+  }
+
+  getProviderHealth(): { openRouter: ProviderHealth } {
+    return {
+      openRouter: { ...this.openRouterHealth, configured: Boolean(this.config.openRouterApiKey) },
+    };
+  }
+
+  async refreshOpenRouterHealth(): Promise<ProviderHealth> {
+    this.openRouterHealth = {
+      ...this.openRouterHealth,
+      configured: Boolean(this.config.openRouterApiKey),
+      lastCheckedAt: new Date().toISOString(),
+    };
+
+    if (!this.config.openRouterApiKey) {
+      this.openRouterHealth = {
+        configured: false,
+        available: false,
+        lastCheckedAt: this.openRouterHealth.lastCheckedAt,
+        lastError: "OPENROUTER_API_KEY is not configured",
+        lastStatus: null,
+      };
+      return this.openRouterHealth;
+    }
+
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/auth/key", {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${this.config.openRouterApiKey}`,
+        },
+      });
+      const responseText = await response.text().catch(() => "");
+
+      if (!response.ok) {
+        const errorDetail = extractHttpErrorDetail(responseText);
+        this.markOpenRouterUnhealthy(
+          response.status,
+          errorDetail || `OpenRouter health check failed with HTTP ${response.status}`,
+        );
+        console.error(
+          `[ai] [ERROR] OpenRouter health check failed (${response.status}): ${this.openRouterHealth.lastError}`,
+        );
+        return this.openRouterHealth;
+      }
+
+      this.markOpenRouterHealthy(response.status);
+      return this.openRouterHealth;
+    } catch (err) {
+      this.markOpenRouterUnhealthy(
+        null,
+        `OpenRouter health check network error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      console.error(`[ai] [ERROR] ${this.openRouterHealth.lastError}`);
+      return this.openRouterHealth;
+    }
+  }
+
+  private markOpenRouterHealthy(status: number | null): void {
+    this.openRouterHealth = {
+      configured: Boolean(this.config.openRouterApiKey),
+      available: true,
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+      lastStatus: status,
+    };
+  }
+
+  private markOpenRouterUnhealthy(status: number | null, error: string): void {
+    this.openRouterHealth = {
+      configured: Boolean(this.config.openRouterApiKey),
+      available: false,
+      lastCheckedAt: new Date().toISOString(),
+      lastError: error,
+      lastStatus: status,
+    };
+  }
 
   /**
    * 提交结构化的 AI 提示词请求
@@ -111,21 +229,84 @@ export class AiService {
       },
     };
 
-    return this.executeWithRetry(schemaName, schema, body);
+    return this.withAiRequestSlot(() => this.executeWithRetry(schemaName, schema, body));
+  }
+
+  private async withAiRequestSlot<T>(task: () => Promise<T>): Promise<T> {
+    if (this.activeAiRequests >= this.maxConcurrentAiRequests) {
+      await new Promise<void>((resolve) => this.aiRequestWaiters.push(resolve));
+    }
+
+    this.activeAiRequests++;
+    try {
+      return await task();
+    } finally {
+      this.activeAiRequests = Math.max(0, this.activeAiRequests - 1);
+      const next = this.aiRequestWaiters.shift();
+      if (next) {
+        next();
+      }
+    }
+  }
+
+  /**
+   * 检测 JSON 响应是否疑似被截断（模型输出不完整）
+   * 典型特征：缺少闭合括号、字符串未结束、字段名被截断（如 diversityS 而非 diversityScore）
+   */
+  private isTruncatedJson(content: string): { truncated: boolean; reason?: string } {
+    try {
+      JSON.parse(content);
+      return { truncated: false };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+
+      // 非截断类错误（真正的格式错误）
+      if (!msg.includes("Unexpected end of JSON input") &&
+          !msg.includes("Expected") &&
+          !msg.includes("position")) {
+        return { truncated: false };
+      }
+
+      // 截断特征：位置信息指向文件末尾附近，或缺失闭合结构
+      const posMatch = msg.match(/at position (\d+)/);
+      if (posMatch) {
+        const pos = Number(posMatch[1]);
+        const isNearEnd = content.length > 50 && pos > content.length * 0.7;
+        const hasUnclosedBrace = (content.match(/{/g) || []).length > (content.match(/}/g) || []).length;
+        const hasUnclosedBracket = (content.match(/\[/g) || []).length > (content.match(/\]/g) || []).length;
+        const hasUnclosedString = /"[^"\\]*(?:\\.[^"\\]*)*$/.test(content.trim());
+
+        if (isNearEnd || hasUnclosedBrace || hasUnclosedBracket || hasUnclosedString) {
+          return { truncated: true, reason: msg };
+        }
+      }
+
+      // 完全没有内容但报错
+      if (content.trim().length === 0) {
+        return { truncated: true, reason: "Empty response" };
+      }
+
+      return { truncated: false };
+    }
   }
 
   /**
    * 解析并验证 AI 返回的 JSON 字符串是否符合指定的 Zod Schema 格式
-   * 
+   *
    * @param content AI 返回的原始内容字符串
    * @param schema Zod 校验 Schema
+   * @param attempt 当前尝试次数（用于截断重试）
    * @returns 校验通过的解析对象
    * @throws 当解析出错或不符合 Zod schema 格式时抛出异常
    */
   private parseAndValidate<TSchema extends z.ZodTypeAny>(
     content: string,
     schema: TSchema,
+    attempt = 1,
+    maxAttempts = 3,
   ): z.infer<TSchema> {
+    const MAX_CONTENT_LOG = 300;
+
     try {
       // 1. 尝试直接进行整串 JSON 解析
       try {
@@ -136,14 +317,31 @@ export class AiService {
         // 部分 LLM 在返回 JSON 时可能会夹带 Markdown 标识符或解释性前缀后缀
         const jsonMatch = content.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          return schema.parse(parsed);
+          const extracted = jsonMatch[0];
+          try {
+            const parsed = JSON.parse(extracted);
+            return schema.parse(parsed);
+          } catch {
+            // JSON 提取出来了但仍然解析失败，交给下方统一处理
+          }
         }
         throw new Error("未能从返回内容中提取到合法的 JSON 格式");
       }
     } catch (err) {
-      console.error(`[ai] [ERROR] JSON 解析或 Schema 验证失败，原始响应内容为: ${content.slice(0, 300)}...`);
-      throw new Error(`AI 返回内容解析校验失败: ${err instanceof Error ? err.message : String(err)}`);
+      const parseError = err instanceof Error ? err.message : String(err);
+
+      // 检测是否为截断 JSON，若是且还有重试机会则抛出让上层重试
+      const truncatedCheck = this.isTruncatedJson(content);
+      if (truncatedCheck.truncated && attempt < maxAttempts) {
+        const warnMsg = `[ai] [WARNING] 检测到 AI 返回内容疑似被截断 (尝试 ${attempt}/${maxAttempts}): ${truncatedCheck.reason}`;
+        console.warn(`${warnMsg}，原始内容前 ${Math.min(content.length, 200)} 字符: ${content.slice(0, 200)}`);
+        const e = new Error(`[截断] AI 返回 JSON 被截断: ${truncatedCheck.reason}`);
+        (e as any).isTruncated = true;
+        throw e;
+      }
+
+      console.error(`[ai] [ERROR] JSON 解析或 Schema 验证失败，原始响应内容为: ${content.slice(0, MAX_CONTENT_LOG)}${content.length > MAX_CONTENT_LOG ? "..." : ""}`);
+      throw new Error(`AI 返回内容解析校验失败: ${parseError}`);
     }
   }
 
@@ -265,7 +463,17 @@ export class AiService {
       return null;
     }
 
-    return this.parseAndValidate(content, schema);
+    try {
+      return this.parseAndValidate(content, schema);
+    } catch (err) {
+      // 检测到截断错误，且还有重试机会
+      if ((err as any)?.isTruncated && attempt < maxRetries) {
+        console.warn(`[ai] [WARNING] 小米 MIMO JSON 截断，${1000 * attempt}ms 后自动重试 (${attempt + 1}/${maxRetries})...`);
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        return this.postToMimo(schemaName, schema, body, attempt + 1, maxRetries);
+      }
+      throw err;
+    }
   }
 
   /**
@@ -284,6 +492,13 @@ export class AiService {
     attempt = 1,
     maxRetries = 3,
   ): Promise<z.infer<TSchema> | null> {
+    if (!this.openRouterHealth.lastCheckedAt || this.openRouterHealth.lastStatus === 401 || this.openRouterHealth.lastStatus === 403) {
+      const health = await this.refreshOpenRouterHealth();
+      if (!health.available && (health.lastStatus === 401 || health.lastStatus === 403)) {
+        throw new Error(`OpenRouter health check failed (${health.lastStatus}): ${health.lastError}`);
+      }
+    }
+
     const bodyStr = JSON.stringify(body);
     console.info(`[ai] [INFO] 调用 OpenRouter 备份接口 (${this.config.openRouterModel}) - 尝试 ${attempt}/${maxRetries}, 请求体大小: ${bodyStr.length} 字符`);
 
@@ -373,7 +588,16 @@ export class AiService {
       return null;
     }
 
-    return this.parseAndValidate(content, schema);
+    try {
+      return this.parseAndValidate(content, schema);
+    } catch (err) {
+      if ((err as any)?.isTruncated && attempt < maxRetries) {
+        console.warn(`[ai] [WARNING] OpenRouter JSON 截断，${1000 * attempt}ms 后自动重试 (${attempt + 1}/${maxRetries})...`);
+        await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        return this.postToOpenRouter(schemaName, schema, body, attempt + 1, maxRetries);
+      }
+      throw err;
+    }
   }
 
   /**

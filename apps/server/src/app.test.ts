@@ -7,6 +7,8 @@ function createTestConfig() {
     openRouterModel: "deepseek/deepseek-v4-flash",
     openRouterSiteUrl: "http://localhost:5173",
     openRouterAppName: "Hot Monitor Test",
+    mimoBaseUrl: "https://api.xiaomimimo.com/v1",
+    mimoModel: "mimo-v2.5-pro",
     webhookUrls: [],
     emailTo: [],
     smtp: { secure: false },

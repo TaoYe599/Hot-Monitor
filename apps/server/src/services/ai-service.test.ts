@@ -6,6 +6,8 @@ const service = new AiService({
   openRouterModel: "deepseek/deepseek-v4-flash",
   openRouterSiteUrl: "http://localhost:5173",
   openRouterAppName: "Hot Monitor Test",
+  mimoBaseUrl: "https://api.xiaomimimo.com/v1",
+  mimoModel: "mimo-v2.5-pro",
   emailTo: [],
   smtp: { secure: false },
   port: 8787,
