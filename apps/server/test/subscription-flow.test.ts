@@ -183,4 +183,67 @@ describe("智能订阅分流与热点关联集成测试 (Subscription Flow & Rel
     }
   });
 
+  it("验证 3: 彻底移除 ScanRunner 中的冷却期拦截 (确保发布时间早于当前时间减去冷却时间的内容不再被误杀跳过)", async () => {
+    // 1. 初始化 Fastify 与内存 SQLite 数据库
+    const { app, services } = await buildApp({ config: createTestConfig() });
+    const { repository, runner } = services;
+
+    try {
+      // 2. 建立监控任务，冷却时间设定为 60 分钟
+      const monitor = await repository.createMonitor({
+        name: "Cooldown Limit Test",
+        query: "Harness, Hermes",
+        description: "watch harness releases with cooldown limit",
+        intervalMinutes: 15,
+        cooldownMinutes: 60,
+        enabled: true,
+        sources: {
+          twitter: true,
+          search: true,
+          rss: true,
+          github: true,
+          hackernews: false,
+          zhihu: false,
+          baidu: false,
+          weibo: false,
+          reddit: false
+        }
+      });
+
+      // 3. 建立一个 Mock 采集信源，其发布时间为 2 天前 (远远早于 60 分钟的冷却阈值)
+      const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
+      const mockCandidates = [
+        {
+          sourceKind: "rss" as const,
+          sourceLabel: "官方博客",
+          title: "Harness releases new developer agent 2 days ago",
+          url: "https://harness.io/blog/old-agent-release",
+          publishedAt: twoDaysAgo, // 2 天前发布的内容
+          author: "Harness Team",
+          excerpt: "Harness officially announced the next-gen Hermes Agent 2 days ago.",
+          content: "The Harness agent integrates deep MoE routing and enables old instant command execution.",
+          engagementScore: 0.8,
+          trustScore: 0.95,
+          tags: ["agent", "Harness"],
+          raw: {},
+        }
+      ];
+
+      // 4. 重写 ScanRunner 内部的数据源收集逻辑，使其只返回我们的 Mock 候选数据
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (runner as any).sourceService.collect = async () => mockCandidates;
+
+      // 5. 触发扫描，运行 AI 验证和 Heuristic 聚类
+      const summary = await runner.runMonitor(monitor);
+
+      // 6. 强力断言：发布在 2 天前的内容在之前的 Bug 下会被冷却判定直接跳过，在修复后，它应该能够成功被验证并创建事件！
+      expect(summary.acceptedEvents.length).toBe(1);
+      expect(summary.acceptedEvents[0].title).toContain("Harness releases new developer agent 2 days ago");
+
+    } finally {
+      await app.close();
+    }
+  });
+
 });
+

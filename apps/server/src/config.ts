@@ -40,8 +40,8 @@ const envSchema = z.object({
   SMTP_PASSWORD: z.string().optional(),
   SMTP_FROM: z.string().optional(),
   EMAIL_TO: z.string().default(""),
-  HOT_MONITOR_PORT: z.coerce.number().default(8787),
-  HOT_MONITOR_PUBLIC_URL: z.string().default("http://localhost:8787"),
+  HOT_MONITOR_PORT: z.coerce.number().default(3001),
+  HOT_MONITOR_PUBLIC_URL: z.string().default("http://localhost:3001"),
   HOT_MONITOR_DB_PATH: z.string().default("file:./apps/server/data/hot-monitor.db"),
   // 评分阈值配置
   PRE_FILTER_THRESHOLD: z.coerce.number().min(0).max(1).default(0.2),

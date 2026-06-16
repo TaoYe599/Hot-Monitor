@@ -928,7 +928,7 @@ export default function App() {
 
         {status === "degraded" && !snapshot && (
           <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            <strong>后端服务未连接。</strong> 请确保后端服务正在运行：<code className="rounded bg-amber-100 px-1">pnpm dev</code>。如果问题持续，请检查端口 8787 是否被占用：<code className="rounded bg-amber-100 px-1">netstat -ano | findstr :8787</code>
+            <strong>后端服务未连接。</strong> 请确保后端服务正在运行：<code className="rounded bg-amber-100 px-1">pnpm dev</code>。如果问题持续，请检查端口 3001 是否被占用：<code className="rounded bg-amber-100 px-1">netstat -ano | findstr :3001</code>
           </div>
         )}
 
