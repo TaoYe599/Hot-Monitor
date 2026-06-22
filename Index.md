@@ -317,11 +317,6 @@ packages/shared/src/index.ts
 | `OPENROUTER_API_KEY` | OpenRouter API 密钥 | - |
 | `OPENROUTER_MODEL` | AI 模型 | `openai/gpt-4.1-mini` |
 | `TWITTERAPI_IO_KEY` | Twitter API 密钥 | - |
-| `SMTP_HOST` | SMTP 服务器 | - |
-| `SMTP_PORT` | SMTP 端口 | - |
-| `SMTP_USER` | SMTP 用户名 | - |
-| `SMTP_PASS` | SMTP 密码 | - |
-| `SMTP_FROM` | 发件人地址 | - |
 | `HOT_MONITOR_PORT` | 服务端口 | `8787` |
 | `HOT_MONITOR_DB_PATH` | 数据库路径 | `file:./apps/server/data/hot-monitor.db` |
 | `PRE_FILTER_THRESHOLD` | 预过滤阈值 | `0.2` |

@@ -30,18 +30,8 @@ const envSchema = z.object({
   OPENROUTER_SITE_URL: z.string().default("http://localhost:5173"),
   OPENROUTER_APP_NAME: z.string().default("Hot Monitor"),
   TWITTERAPI_IO_KEY: z.string().optional(),
-  SMTP_HOST: z.string().optional(),
-  SMTP_PORT: z.coerce.number().optional(),
-  SMTP_SECURE: z
-    .string()
-    .default("false")
-    .transform((value) => value === "true"),
-  SMTP_USER: z.string().optional(),
-  SMTP_PASSWORD: z.string().optional(),
-  SMTP_FROM: z.string().optional(),
-  EMAIL_TO: z.string().default(""),
-  HOT_MONITOR_PORT: z.coerce.number().default(8787),
-  HOT_MONITOR_PUBLIC_URL: z.string().default("http://localhost:8787"),
+  HOT_MONITOR_PORT: z.coerce.number().default(3001),
+  HOT_MONITOR_PUBLIC_URL: z.string().default("http://localhost:3001"),
   HOT_MONITOR_DB_PATH: z.string().default("file:./apps/server/data/hot-monitor.db"),
   // 评分阈值配置
   PRE_FILTER_THRESHOLD: z.coerce.number().min(0).max(1).default(0.2),
@@ -58,15 +48,6 @@ export interface AppConfig {
   openRouterSiteUrl: string;
   openRouterAppName: string;
   twitterApiKey?: string;
-  emailTo: string[];
-  smtp: {
-    host?: string;
-    port?: number;
-    secure: boolean;
-    user?: string;
-    password?: string;
-    from?: string;
-  };
   port: number;
   publicUrl: string;
   databasePath: string;
@@ -96,15 +77,6 @@ export function loadConfig(): AppConfig {
     openRouterSiteUrl: env.OPENROUTER_SITE_URL,
     openRouterAppName: env.OPENROUTER_APP_NAME,
     twitterApiKey: env.TWITTERAPI_IO_KEY,
-    emailTo: splitCsv(env.EMAIL_TO),
-    smtp: {
-      host: env.SMTP_HOST,
-      port: env.SMTP_PORT,
-      secure: env.SMTP_SECURE,
-      user: env.SMTP_USER,
-      password: env.SMTP_PASSWORD,
-      from: env.SMTP_FROM,
-    },
     port: env.HOT_MONITOR_PORT,
     publicUrl: env.HOT_MONITOR_PUBLIC_URL,
     databasePath: env.HOT_MONITOR_DB_PATH,

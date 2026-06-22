@@ -27,7 +27,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { NavLink, Route, Routes, useNavigate } from "react-router";
+import { NavLink, Route, Routes, useNavigate, Navigate } from "react-router";
 
 import {
   EventsFilterBar,
@@ -928,15 +928,15 @@ export default function App() {
 
         {status === "degraded" && !snapshot && (
           <div className="rounded-2xl border-2 border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            <strong>后端服务未连接。</strong> 请确保后端服务正在运行：<code className="rounded bg-amber-100 px-1">pnpm dev</code>。如果问题持续，请检查端口 8787 是否被占用：<code className="rounded bg-amber-100 px-1">netstat -ano | findstr :8787</code>
+            <strong>后端服务未连接。</strong> 请确保后端服务正在运行：<code className="rounded bg-amber-100 px-1">pnpm dev</code>。如果问题持续，请检查端口 3001 是否被占用：<code className="rounded bg-amber-100 px-1">netstat -ano | findstr :3001</code>
           </div>
         )}
 
         <div className="flex flex-col gap-5 lg:flex-row">
           <aside className="panel-card rounded-[2rem] p-3 lg:w-72">
             <nav className="grid gap-2">
-              {[["/", "总览"], ["/monitors", "任务管理"], ["/hotspots", "热点发现"], ["/settings", "通知设置"]].map(([to, label]) => (
-                <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => `rounded-[1.3rem] px-4 py-3 text-sm font-semibold ${isActive ? "bg-[var(--ember-soft)] text-[var(--ember)]" : "bg-white/60 text-[var(--ink-soft)]"}`}>{label}</NavLink>
+              {[["/monitors", "任务管理"], ["/hotspots", "热点发现"], ["/settings", "通知设置"]].map(([to, label]) => (
+                <NavLink key={to} to={to} className={({ isActive }) => `rounded-[1.3rem] px-4 py-3 text-sm font-semibold ${isActive ? "bg-[var(--ember-soft)] text-[var(--ember)]" : "bg-white/60 text-[var(--ink-soft)]"}`}>{label}</NavLink>
               ))}
             </nav>
           </aside>
@@ -956,7 +956,7 @@ export default function App() {
               </div>
             )}
             <Routes>
-              <Route path="/" element={<div className="grid gap-5 xl:grid-cols-[1.08fr_0.92fr]"><div><EventsFilterBar monitors={snapshot?.monitors ?? []} prefs={eventsPrefs.prefs} onSortChange={eventsPrefs.setSort} onFilterChange={eventsPrefs.setFilter} onClearFilter={eventsPrefs.clearFilter} onQuickFilterChange={eventsPrefs.setQuickFilter} /><Panel title="实时命中" body="这里展示关键词监控命中的结果。"><EventsPanel events={filteredEvents} loading={eventsLoading} monitors={snapshot?.monitors ?? []} selectedIds={selectedEventIds} expandedReasons={expandedReasons} onSelectAll={handleSelectAll} onSelectEvent={handleSelectEvent} onExpandAll={handleExpandAll} onCollapseAll={handleCollapseAll} onToggleReason={handleToggleReason} onMarkRead={handleBatchMarkRead} onDelete={handleBatchDelete} /></Panel></div><div className="grid gap-5"><Panel title="热点快照" body="这里展示主题热点监控聚合出的结果。">{snapshot?.hotspots?.length ? <HotspotList hotspots={snapshot.hotspots.slice(0, 3)} /> : <Empty text="还没有热点簇。创建一个主题热点监控后，再手动触发一次扫描。" />}</Panel><Panel title="扫描任务" body="扫描提交后会在后台执行，并在这里更新状态。">{jobs.length ? jobs.slice(0, 6).map((job) => <article key={job.id} className="mb-3 rounded-[1.4rem] bg-white/70 p-4"><div className="flex flex-wrap items-center gap-3"><strong>{job.monitorName}</strong><span className="mono text-xs uppercase tracking-[0.18em] text-[var(--ink-soft)]">{job.status}</span>{(job.status === "queued" || job.status === "running") ? <button type="button" className="rounded-full bg-[rgba(8,17,31,0.06)] px-3 py-1 text-xs font-semibold text-[var(--ink-soft)]" onClick={() => void cancelScanJob(job.id)}>取消</button> : null}</div><p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">{jobSummary(job)}</p></article>) : <Empty text="还没有扫描任务记录。" />}</Panel></div></div>} />
+              <Route path="/" element={<Navigate to="/hotspots" replace />} />
               <Route path="/monitors" element={
                   <div className="grid gap-5 xl:grid-cols-[1fr_0.78fr]">
                     {/* 中栏：冷静的输入画布 */}
@@ -1069,7 +1069,7 @@ export default function App() {
                     </form>
 
                     {/* 右栏：如杂志目录般安静的白玉卡片列表 */}
-                    <div className="grid gap-4.5">
+                    <div className="grid gap-4.5 h-fit">
                       {(snapshot?.monitors ?? []).map((monitor) => {
                         const job = jobsByMonitorId.get(monitor.id);
                         const isRunning = job?.status === "queued" || job?.status === "running";
@@ -1150,6 +1150,30 @@ export default function App() {
                           </article>
                         );
                       })}
+                      <Panel title="扫描任务" body="扫描提交后会在后台执行，并在这里更新状态。">
+                        {jobs.length ? (
+                          jobs.slice(0, 6).map((job) => (
+                            <article key={job.id} className="mb-3 rounded-[1.4rem] bg-white/70 p-4">
+                              <div className="flex flex-wrap items-center gap-3">
+                                <strong>{job.monitorName}</strong>
+                                <span className="mono text-xs uppercase tracking-[0.18em] text-[var(--ink-soft)]">{job.status}</span>
+                                {job.status === "queued" || job.status === "running" ? (
+                                  <button
+                                    type="button"
+                                    className="rounded-full bg-[rgba(8,17,31,0.06)] px-3 py-1 text-xs font-semibold text-[var(--ink-soft)]"
+                                    onClick={() => void cancelScanJob(job.id)}
+                                  >
+                                    取消
+                                  </button>
+                                ) : null}
+                              </div>
+                              <p className="mt-2 text-sm leading-6 text-[var(--ink-soft)]">{jobSummary(job)}</p>
+                            </article>
+                          ))
+                        ) : (
+                          <Empty text="还没有扫描任务记录。" />
+                        )}
+                      </Panel>
                     </div>
                   </div>
                 } />

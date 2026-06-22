@@ -31,11 +31,11 @@ export default defineConfig({
     }),
   ],
   server: {
-    host: true,
-    port: 5255,
+    host: "127.0.0.1",
+    port: 7777,
     proxy: {
       "/api": {
-        target: "http://localhost:8787",
+        target: "http://localhost:3001",
         changeOrigin: true,
       },
     },
