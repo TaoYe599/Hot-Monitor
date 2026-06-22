@@ -300,8 +300,6 @@ const createAiService = (): AiService => {
     openRouterAppName: "Hot Monitor Test",
     mimoBaseUrl: "https://api.xiaomimimo.com/v1",
     mimoModel: "mimo-v2.5-pro",
-    emailTo: [],
-    smtp: { secure: false },
     port: 8787,
     publicUrl: "http://localhost:8787",
     databasePath: ":memory:",

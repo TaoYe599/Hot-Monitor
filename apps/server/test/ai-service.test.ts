@@ -24,8 +24,6 @@ describe("AiService 双轨高可用灾备机制测试", () => {
       openRouterModel: "openai/gpt-4.1-mini",
       openRouterSiteUrl: "http://localhost:5173",
       openRouterAppName: "Hot Monitor Test",
-      emailTo: [],
-      smtp: { secure: false },
       port: 8787,
       publicUrl: "http://localhost:8787",
       databasePath: "file:./test.db",
@@ -33,6 +31,13 @@ describe("AiService 双轨高可用灾备机制测试", () => {
     };
 
     const aiService = new AiService(mockConfig);
+    aiService["openRouterHealth"] = {
+      configured: true,
+      available: true,
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+      lastStatus: 200,
+    };
 
     // 模拟 fetch 仅对小米 MIMO 接口返回成功
     const fetchSpy = vi.spyOn(global, "fetch").mockImplementation(async (url) => {
@@ -83,8 +88,6 @@ describe("AiService 双轨高可用灾备机制测试", () => {
       openRouterModel: "openai/gpt-4.1-mini",
       openRouterSiteUrl: "http://localhost:5173",
       openRouterAppName: "Hot Monitor Test",
-      emailTo: [],
-      smtp: { secure: false },
       port: 8787,
       publicUrl: "http://localhost:8787",
       databasePath: "file:./test.db",
@@ -92,6 +95,13 @@ describe("AiService 双轨高可用灾备机制测试", () => {
     };
 
     const aiService = new AiService(mockConfig);
+    aiService["openRouterHealth"] = {
+      configured: true,
+      available: true,
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+      lastStatus: 200,
+    };
 
     // 模拟 fetch：第一阶段小米 MIMO 抛出网络异常，第二阶段 OpenRouter 成功处理
     const fetchSpy = vi.spyOn(global, "fetch").mockImplementation(async (url) => {
@@ -143,8 +153,6 @@ describe("AiService 双轨高可用灾备机制测试", () => {
       openRouterModel: "openai/gpt-4.1-mini",
       openRouterSiteUrl: "http://localhost:5173",
       openRouterAppName: "Hot Monitor Test",
-      emailTo: [],
-      smtp: { secure: false },
       port: 8787,
       publicUrl: "http://localhost:8787",
       databasePath: "file:./test.db",
@@ -154,6 +162,13 @@ describe("AiService 双轨高可用灾备机制测试", () => {
     };
 
     const aiService = new AiService(mockConfig);
+    aiService["openRouterHealth"] = {
+      configured: true,
+      available: true,
+      lastCheckedAt: new Date().toISOString(),
+      lastError: null,
+      lastStatus: 200,
+    };
 
     const fetchSpy = vi.spyOn(global, "fetch").mockImplementation(async (url) => {
       if (url === "https://openrouter.ai/api/v1/chat/completions") {
